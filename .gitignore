@@ -1,0 +1,52 @@
+# Byte-compiled
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution
+dist/
+build/
+*.egg-info/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Model artifacts
+outputs/
+*.pth
+*.pt
+*.onnx
+
+# Data
+data/
+*.csv
+
+# Environment
+.env
+.env.local
+.env.production
+
+# Node
+node_modules/
+frontend/dist/
+frontend/node_modules/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Logs
+*.log
+
+CLAUDE.md

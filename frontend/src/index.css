@@ -1,0 +1,176 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: #101922;
+    font-family: 'Space Grotesk', 'Inter', system-ui, sans-serif;
+    @apply text-slate-100;
+  }
+
+  ::selection {
+    background: rgba(19, 127, 236, 0.3);
+    color: #137fec;
+  }
+}
+
+@layer components {
+  /* ── Buttons ─────────────────────────────── */
+  .btn-primary {
+    @apply px-6 py-3 text-white rounded-lg font-semibold text-sm
+           active:scale-[0.98] transition-all duration-200;
+    background-color: #137fec;
+    box-shadow: 0 0 20px rgba(19, 127, 236, 0.15);
+  }
+  .btn-primary:hover {
+    background-color: #0e6adb;
+    box-shadow: 0 4px 32px rgba(19, 127, 236, 0.35);
+  }
+
+  .btn-secondary {
+    @apply px-6 py-3 text-slate-200 rounded-lg font-semibold text-sm
+           transition-all duration-200;
+    background-color: #19232e;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .btn-secondary:hover {
+    background-color: #1e2d3d;
+    border-color: rgba(255, 255, 255, 0.15);
+  }
+
+  .btn-ghost {
+    @apply px-4 py-2.5 text-slate-400 rounded-lg text-sm font-medium
+           transition-all duration-200;
+  }
+  .btn-ghost:hover {
+    color: #fff;
+    background-color: rgba(255, 255, 255, 0.05);
+  }
+
+  /* ── Cards ───────────────────────────────── */
+  .card {
+    @apply rounded-xl p-6;
+    background-color: #19232e;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+  }
+
+  .card-hover {
+    @apply card transition-all duration-300;
+  }
+  .card-hover:hover {
+    border-color: rgba(19, 127, 236, 0.3);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.4);
+    transform: translateY(-2px);
+  }
+
+  .glass-panel {
+    background: rgba(25, 35, 46, 0.4);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+  }
+
+  .btn-glass {
+    @apply text-white rounded-lg transition-all duration-300;
+    background: rgba(255, 255, 255, 0.06);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    box-shadow: 0 2px 16px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+  .btn-glass:hover {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.15);
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  }
+
+  /* ── Badges ──────────────────────────────── */
+  .badge {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-xs font-medium;
+  }
+
+  .badge-success {
+    @apply badge;
+    background: rgba(34, 197, 94, 0.1);
+    color: #22c55e;
+    border: 1px solid rgba(34, 197, 94, 0.2);
+  }
+
+  .badge-danger {
+    @apply badge;
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+  }
+
+  .badge-warning {
+    @apply badge;
+    background: rgba(245, 158, 11, 0.1);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.2);
+  }
+
+  /* ── Inputs ──────────────────────────────── */
+  .input-field {
+    @apply w-full px-3 py-2.5 rounded-lg text-sm text-white placeholder-slate-500
+           outline-none transition-all duration-200;
+    background: rgba(30, 45, 61, 0.5);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .input-field:focus {
+    border-color: #137fec;
+    box-shadow: 0 0 0 2px rgba(19, 127, 236, 0.2);
+  }
+
+  /* ── Sections ────────────────────────────── */
+  .section-container {
+    @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+  }
+}
+
+/* ── Scrollbar ────────────────────────────── */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #101922;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a3b4d;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3e5066;
+}
+
+/* ── Range input styling ──────────────────── */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+input[type="range"]::-webkit-slider-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #2a3b4d;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #137fec;
+  margin-top: -6px;
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(19, 127, 236, 0.4);
+}

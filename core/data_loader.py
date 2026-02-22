@@ -130,6 +130,8 @@ class AMLDataPreprocessor:
         patient_csv = self.config.paths.patient_csv
 
         logger.info(f"Scanning images from: {images_dir}")
+        if images_dir != self.config.paths.data_root:
+            logger.info(f"  (auto-detected from data_root: {self.config.paths.data_root})")
 
         # Discover all images
         image_records = self._discover_images(images_dir)

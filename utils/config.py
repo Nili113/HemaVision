@@ -29,17 +29,55 @@ class PathConfig:
     logs_dir: Path = field(init=False)
     results_dir: Path = field(init=False)
 
+    # Known cell-type folder names from the AML-Cytomorphology dataset
+    _KNOWN_CELL_TYPES = {
+        'BLA', 'MYO', 'NGS', 'LYT', 'MON', 'EOS', 'BAS', 'EBO',
+        'NGB', 'KSC', 'LYA', 'MMZ', 'MOB', 'MYB', 'NIF', 'OTH',
+        'PEB', 'PLM', 'PMB', 'PMO', 'ART',
+    }
+
     def __post_init__(self):
-        # Auto-detect: use data_root/images if it exists, else data_root itself
-        # (Kaggle datasets often have class folders directly in the root)
-        candidate = self.data_root / "images"
-        self.images_dir = candidate if candidate.exists() else self.data_root
+        # Auto-detect the actual images directory.
+        # Kaggle datasets have varying nesting depths, e.g.:
+        #   data_root/images/BLA/...
+        #   data_root/PKG - AML-Cytomorphology/AML-Cytomorphology/MYO/...
+        #   data_root/BLA/...
+        self.images_dir = self._find_images_dir()
         self.patient_csv = self.data_root / "patient_data.csv"
         self.output_dir = self.project_root / "outputs"
         self.checkpoints_dir = self.output_dir / "checkpoints"
         self.gradcam_dir = self.output_dir / "gradcam_results"
         self.logs_dir = self.output_dir / "logs"
         self.results_dir = self.output_dir / "results"
+
+    def _find_images_dir(self) -> Path:
+        """Walk data_root to find the directory containing cell-type folders."""
+        # 1. Check data_root/images (standard layout)
+        candidate = self.data_root / "images"
+        if candidate.exists() and self._has_cell_type_dirs(candidate):
+            return candidate
+
+        # 2. Check data_root itself
+        if self._has_cell_type_dirs(self.data_root):
+            return self.data_root
+
+        # 3. Walk the tree (handles arbitrary nesting like PKG - .../AML-...)
+        if self.data_root.exists():
+            for root, dirs, _files in os.walk(self.data_root):
+                root_path = Path(root)
+                matching = {d for d in dirs if d.upper() in self._KNOWN_CELL_TYPES}
+                if len(matching) >= 3:  # At least 3 known cell types
+                    return root_path
+
+        # 4. Fallback to data_root (will fail later with a clear error)
+        return self.data_root
+
+    def _has_cell_type_dirs(self, path: Path) -> bool:
+        """Check if a directory directly contains known cell-type subdirs."""
+        if not path.is_dir():
+            return False
+        children = {d.name.upper() for d in path.iterdir() if d.is_dir()}
+        return len(children & self._KNOWN_CELL_TYPES) >= 3
 
     def create_directories(self):
         """Create all necessary output directories."""

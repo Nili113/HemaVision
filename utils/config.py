@@ -30,7 +30,10 @@ class PathConfig:
     results_dir: Path = field(init=False)
 
     def __post_init__(self):
-        self.images_dir = self.data_root / "images"
+        # Auto-detect: use data_root/images if it exists, else data_root itself
+        # (Kaggle datasets often have class folders directly in the root)
+        candidate = self.data_root / "images"
+        self.images_dir = candidate if candidate.exists() else self.data_root
         self.patient_csv = self.data_root / "patient_data.csv"
         self.output_dir = self.project_root / "outputs"
         self.checkpoints_dir = self.output_dir / "checkpoints"

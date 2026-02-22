@@ -164,6 +164,7 @@ Edit `frontend/.env` if your backend runs on a different host or port:
 
 ```
 VITE_API_URL=http://localhost:8000
+VITE_GOOGLE_CLIENT_ID={{please-get-this-from-google-cloud}}
 ```
 
 ---

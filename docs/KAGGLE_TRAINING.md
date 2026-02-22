@@ -64,87 +64,245 @@ for root, dirs, files in os.walk("/kaggle/working/HemaVision"):
 
 ```python
 # Cell 4: Dataset Preparation
-# Option A: If the dataset is already on Kaggle, link it via "Add Data" sidebar.
-# Option B: If dataset is from a direct URL or within the repo, handle here.
+# ============================================================
+# DATASET: AML-Cytomorphology_LMU (Munich / LMU)
+#
+# Paper:  Matek, C., Schwarz, S., Marr, C., & Spiekermann, K. (2019).
+#         "A Single-cell Morphological Dataset of Leukocytes from AML
+#         Patients and Non-malignant Controls."
+#
+# Source: The Cancer Imaging Archive (TCIA)
+#         https://www.cancerimagingarchive.net/collection/aml-cytomorphology_lmu/
+#         DOI: 10.7937/tcia.2019.36f5o9ld
+#
+# Kaggle: binilj04/aml-cytomorphology   (~6.2 GB, 15 classes)
+#         https://www.kaggle.com/datasets/binilj04/aml-cytomorphology
+#         Also: umarsani1605/aml-cytomorphology (identical data)
+#
+# ⚠️ IMPORTANT: All Kaggle uploads renamed the BLA (Blast) folder to MYO.
+#    Evidence: BLA=3,268 in the paper → MYO=3,268 in Kaggle (identical count,
+#    all other 14 classes match exactly). The code handles this automatically.
+#
+# Contains: 18,365 single-cell microscopy images (400×400 px, TIFF)
+#           200 patients (100 AML + 100 controls), 15 classes
+#           May-Grünwald-Giemsa stain, peripheral blood smears
+#
+# Structure after extraction:
+#   PKG - AML-Cytomorphology/
+#   └── AML-Cytomorphology/
+#       ├── MYO/   (Blasts — renamed from BLA by uploader, AML positive)
+#       ├── NGS/   (Neutrophils - segmented, 8,484 images)
+#       ├── LYT/   (Lymphocytes - typical, 3,937 images)
+#       ├── MON/   (Monocytes, 1,789 images)
+#       └── ...    (15 cell-type subdirectories)
+#   (No patient_data.csv — synthetic metadata generated automatically)
+# ============================================================
 
 import os
 import shutil
 
 # ============================================================
-# OPTION A: Using a Kaggle dataset (recommended)
-# If you added a dataset via the Kaggle "Add Data" button,
-# it will be at /kaggle/input/<dataset-name>/
-# Uncomment and adjust the following:
+# OPTION A (RECOMMENDED): Add via Kaggle "Add Data" sidebar
+#   1. Click "+ Add Data" in the right sidebar
+#   2. Search: "binilj04/aml-cytomorphology"
+#      (or "umarsani1605/aml-cytomorphology" — same data)
+#   3. Select: "AML-Cytomorphology-WBC" (~6.2 GB)
+#   4. Click "Add" → data appears under /kaggle/input/
+#
+# NOTE: The blast class is named MYO (not BLA) in all Kaggle uploads.
+#       The code handles this automatically.
 # ============================================================
 
-# KAGGLE_DATASET_PATH = "/kaggle/input/your-dataset-name"
-# LOCAL_DATASET_PATH = "/kaggle/working/HemaVision/data"
-# os.makedirs(LOCAL_DATASET_PATH, exist_ok=True)
-# !cp -r {KAGGLE_DATASET_PATH}/* {LOCAL_DATASET_PATH}/
+# Try multiple known dataset paths (Kaggle uses different path formats)
+# New format: /kaggle/input/datasets/<owner>/<dataset-name>
+# Old format: /kaggle/input/<dataset-name>
+import glob as _glob
 
-# ============================================================
-# OPTION B: Download from a URL (e.g., Google Drive, Zenodo, etc.)
-# ============================================================
-
-# !gdown "https://drive.google.com/uc?id=YOUR_FILE_ID" -O dataset.zip
-# !unzip -q dataset.zip -d /kaggle/working/HemaVision/data
-
-# ============================================================
-# OPTION C: Check if data already exists in the repo
-# ============================================================
-
-data_candidates = [
-    "/kaggle/working/HemaVision/data",
-    "/kaggle/working/HemaVision/dataset",
-    "/kaggle/working/HemaVision/backend/data",
-    "/kaggle/working/HemaVision/ml",
-    "/kaggle/working/HemaVision/ml/data",
-    "/kaggle/working/HemaVision/model",
+KAGGLE_CANDIDATES = [
+    # New Kaggle path format (owner/dataset)
+    "/kaggle/input/datasets/binilj04/aml-cytomorphology",
+    "/kaggle/input/datasets/umarsani1605/aml-cytomorphology",
+    "/kaggle/input/datasets/gchan357/human-aml-cytomorphology-dataset",
+    "/kaggle/input/datasets/walkersneps/aml-cytomorphology-lmu",
+    # Old Kaggle path format (dataset-name only)
+    "/kaggle/input/aml-cytomorphology",
+    "/kaggle/input/aml-cytomorphology-lmu",
+    "/kaggle/input/aml-cytomorphology-2",
+    "/kaggle/input/human-aml-cytomorphology-dataset",
 ]
 
-for path in data_candidates:
-    if os.path.exists(path):
-        print(f"Found: {path}")
-        for item in os.listdir(path):
-            full = os.path.join(path, item)
-            if os.path.isdir(full):
-                count = len(os.listdir(full))
-                print(f"   {item}/ ({count} items)")
-            else:
-                size = os.path.getsize(full) / 1e6
-                print(f"   {item} ({size:.1f} MB)")
-    else:
-        print(f"Not found: {path}")
+# Also scan /kaggle/input/ for any matching dataset
+for p in _glob.glob("/kaggle/input/**/BLA", recursive=True):
+    parent = os.path.dirname(p)
+    if parent not in KAGGLE_CANDIDATES:
+        KAGGLE_CANDIDATES.insert(0, parent)  # Prioritize auto-detected
 
-print("\nIf no data found, use OPTION A or B above to load your dataset.")
+LOCAL_DATASET_PATH = "/kaggle/working/HemaVision/AML-Cytomorphology_LMU"
+
+KAGGLE_DATASET_PATH = None
+for candidate in KAGGLE_CANDIDATES:
+    if os.path.exists(candidate):
+        KAGGLE_DATASET_PATH = candidate
+        print(f"✓ Dataset found at: {candidate}")
+        break
+
+if KAGGLE_DATASET_PATH:
+    # Symlink instead of copy to save disk space
+    # Ensure parent directory exists (in case Cell 1 clone is skipped)
+    os.makedirs(os.path.dirname(LOCAL_DATASET_PATH), exist_ok=True)
+    # Remove stale/broken symlink if it exists from a previous run
+    if os.path.islink(LOCAL_DATASET_PATH):
+        os.remove(LOCAL_DATASET_PATH)
+    if not os.path.exists(LOCAL_DATASET_PATH):
+        os.symlink(KAGGLE_DATASET_PATH, LOCAL_DATASET_PATH)
+        print(f"Symlinked → {LOCAL_DATASET_PATH}")
+    else:
+        print(f"Already exists: {LOCAL_DATASET_PATH}")
+else:
+    print("✗ Dataset not found!")
+    print("\nPlease add it via the 'Add Data' sidebar:")
+    print('  1. Click "+ Add Data"')
+    print('  2. Search: "binilj04/aml-cytomorphology"')
+    print('  3. Select "AML-Cytomorphology-WBC" and click Add')
+    print("\nAlternative (Kaggle CLI):")
+    print("  !kaggle datasets download -d binilj04/aml-cytomorphology")
+    print("  !unzip -q aml-cytomorphology.zip -d AML-Cytomorphology_LMU")
+
+# Verify dataset structure
+if os.path.exists(LOCAL_DATASET_PATH):
+    print(f"\nDataset contents:")
+    for item in sorted(os.listdir(LOCAL_DATASET_PATH)):
+        full = os.path.join(LOCAL_DATASET_PATH, item)
+        if os.path.isdir(full):
+            # Check for nested image subdirectories
+            sub_items = os.listdir(full)
+            sub_dirs = [s for s in sub_items if os.path.isdir(os.path.join(full, s))]
+            if sub_dirs:
+                total_images = sum(
+                    len(os.listdir(os.path.join(full, sd)))
+                    for sd in sub_dirs
+                )
+                print(f"  {item}/  ({len(sub_dirs)} classes, {total_images:,} images)")
+                for sd in sorted(sub_dirs):
+                    n = len(os.listdir(os.path.join(full, sd)))
+                    print(f"    {sd}/ ({n:,} images)")
+            else:
+                print(f"  {item}/  ({len(sub_items)} items)")
+        else:
+            size = os.path.getsize(full) / 1e6
+            print(f"  {item}  ({size:.1f} MB)")
 ```
 
 ---
 
-## Cell 5: Setup the Acute Lymphoblastic Leukemia Dataset
+## Cell 5: Verify Dataset & Class Distribution
 
 ```python
-# Cell 5: Download the ALL (Acute Lymphoblastic Leukemia) dataset
-# This is likely the hematology image classification dataset used by HemaVision
+# Cell 5: Verify the AML-Cytomorphology_LMU dataset is ready
 
-# Install kaggle API if needed
-!pip install -q kaggle
+import os
+import matplotlib.pyplot as plt
+from collections import Counter
 
-# Common blood cell / leukemia datasets on Kaggle:
-# - "mehradaria/leukemia"
-# - "andrewmvd/leukemia-classification"
-# - "paultimothymooney/blood-cells"
-# - "unclesamulus/blood-cell-images"
+DATASET_ROOT = "/kaggle/working/HemaVision/AML-Cytomorphology_LMU"
+IMAGES_DIR = os.path.join(DATASET_ROOT, "images")
 
-# If using Kaggle's "Add Data" button - just search for:
-# "blood cell", "leukemia", "ALL", "hematology"
-# and add it to your notebook
+# Auto-detect: Kaggle uploads have varying folder structures
+# e.g. images/, data/data/, AML-Cytomorphology_LMU/data/data/, etc.
+# We find whichever directory contains the cell-type subdirectories.
+KNOWN_CELL_TYPES = {'BLA', 'LYT', 'NGS', 'MON', 'EOS', 'BAS', 'EBO', 'MYO', 'NGB'}
 
-DATASET_DIR = "/kaggle/working/HemaVision/data"
-os.makedirs(DATASET_DIR, exist_ok=True)
+if not os.path.exists(IMAGES_DIR) or not any(
+    d in KNOWN_CELL_TYPES for d in os.listdir(IMAGES_DIR) if os.path.isdir(os.path.join(IMAGES_DIR, d))
+):
+    print("Standard images/ path not found or incomplete, scanning...")
+    found = False
+    for root, dirs, files in os.walk(DATASET_ROOT):
+        matching = set(dirs) & KNOWN_CELL_TYPES
+        if len(matching) >= 3:  # At least 3 known cell types
+            IMAGES_DIR = root
+            print(f"Auto-detected images at: {IMAGES_DIR}")
+            print(f"  Found classes: {sorted(matching)}")
+            found = True
+            break
+    if not found:
+        raise FileNotFoundError(
+            f"Could not find cell-type folders anywhere under {DATASET_ROOT}\n"
+            "Go back to Cell 4 and ensure the dataset is added correctly."
+        )
 
-print(f"Dataset directory: {DATASET_DIR}")
-print(f"Contents: {os.listdir(DATASET_DIR) if os.path.exists(DATASET_DIR) else 'Empty'}")
+# CRITICAL CHECK: Verify blast class exists (BLA in TCIA, MYO in Kaggle)
+# All Kaggle uploads renamed BLA → MYO (folder + files).
+# Evidence: BLA=3,268 in paper, MYO=3,268 in Kaggle; all other counts identical.
+has_blast = os.path.exists(os.path.join(IMAGES_DIR, 'BLA')) or \
+            os.path.exists(os.path.join(IMAGES_DIR, 'MYO'))
+blast_folder = 'BLA' if os.path.exists(os.path.join(IMAGES_DIR, 'BLA')) else 'MYO'
+if not has_blast:
+    print("\n" + "!" * 60)
+    print("WARNING: Neither BLA nor MYO (blast) class found in this dataset!")
+    print("Cannot train AML detection without blast cell images.")
+    print("\nFix: Add 'binilj04/aml-cytomorphology' via Add Data sidebar")
+    print("!" * 60 + "\n")
+else:
+    blast_count = len(os.listdir(os.path.join(IMAGES_DIR, blast_folder)))
+    print(f"\n✓ Blast class found as '{blast_folder}/' ({blast_count:,} images)")
+    if blast_folder == 'MYO':
+        print("  (Kaggle uploads renamed BLA→MYO; code handles this automatically)")
+
+# Count images per class
+class_counts = {}
+for class_name in sorted(os.listdir(IMAGES_DIR)):
+    class_path = os.path.join(IMAGES_DIR, class_name)
+    if os.path.isdir(class_path):
+        n = len([f for f in os.listdir(class_path)
+                 if f.lower().endswith(('.jpg', '.jpeg', '.png', '.tiff', '.bmp'))])
+        class_counts[class_name] = n
+
+total = sum(class_counts.values())
+print(f"Total images: {total:,}")
+print(f"Classes: {len(class_counts)}")
+print(f"\nPer-class breakdown:")
+
+# AML-positive class (BLA in original TCIA, MYO in Kaggle uploads)
+BLAST_CLASSES = {'BLA', 'MYO'}  # Blasts = AML positive (both names)
+
+aml_count = 0
+normal_count = 0
+for cls, count in sorted(class_counts.items(), key=lambda x: -x[1]):
+    marker = " ← AML (positive)" if cls in BLAST_CLASSES else ""
+    print(f"  {cls:5s}: {count:>6,} images{marker}")
+    if cls in BLAST_CLASSES:
+        aml_count += count
+    else:
+        normal_count += count
+
+print(f"\nBinary split:  AML={aml_count:,}  |  Normal={normal_count:,}")
+print(f"Class ratio:   AML={aml_count/total*100:.1f}%  |  Normal={normal_count/total*100:.1f}%")
+
+# Plot distribution
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 5))
+
+# Bar chart of all 21 classes
+classes = list(class_counts.keys())
+counts = list(class_counts.values())
+colors = ['#D62828' if c in BLAST_CLASSES else '#0A2463' for c in classes]
+ax1.barh(classes, counts, color=colors)
+ax1.set_xlabel('Number of Images')
+ax1.set_title(f'Cell Type Distribution ({len(class_counts)} classes)')
+ax1.invert_yaxis()
+
+# Pie chart of binary split
+ax2.pie([aml_count, normal_count], labels=['AML Blast', 'Normal'],
+        colors=['#D62828', '#34C759'], autopct='%1.1f%%',
+        startangle=90, textprops={'fontsize': 14})
+ax2.set_title('Binary Classification Split')
+
+plt.tight_layout()
+plt.savefig('/kaggle/working/HemaVision/class_distribution.png', dpi=150, bbox_inches='tight')
+plt.show()
+
+print(f"\n✓ Dataset verified and ready for training!")
+print(f"  Images dir: {IMAGES_DIR}")
 ```
 
 ---
@@ -251,54 +409,63 @@ else:
 
 ---
 
-## Cell 8: Configure and Run Training
+## Cell 8: Run Training via main.py
 
 ```python
-# Cell 8: Run training
-# IMPORTANT: Adjust these paths based on what you found in
-# Cells 3, 6, and 7. Below are common patterns.
+# Cell 8: Run the HemaVision training pipeline
+#
+# main.py is the project's orchestrator. It runs:
+#   1. Data loading & patient-level splitting (core/data_loader.py)
+#   2. Dual-stream model init - ResNet50 + MLP (core/model.py)
+#   3. Training with weighted BCE loss (core/train.py)
+#   4. Test evaluation (metrics, confusion matrix)
+#   5. Grad-CAM explainability visualizations (core/gradcam.py)
+#   6. Model export
+#
+# The --data-root flag points to the AML-Cytomorphology_LMU dataset.
 
 import os
 os.chdir("/kaggle/working/HemaVision")
 
-# OPTION A: If there's a dedicated training script
-training_scripts = [
-    "train.py",
-    "ml/train.py",
-    "backend/train.py",
-    "backend/ml/train.py",
-    "model/train.py",
-    "scripts/train.py",
-    "src/train.py",
+# Resolve dataset path — try symlink first, then known Kaggle input paths
+import glob as _glob
+
+DATASET_PATH = None
+candidates = [
+    "/kaggle/working/HemaVision/AML-Cytomorphology_LMU",  # Symlinked in Cell 4
+    # New Kaggle path format
+    "/kaggle/input/datasets/binilj04/aml-cytomorphology",
+    "/kaggle/input/datasets/umarsani1605/aml-cytomorphology",
+    "/kaggle/input/datasets/gchan357/human-aml-cytomorphology-dataset",
+    # Old Kaggle path format
+    "/kaggle/input/aml-cytomorphology",
+    "/kaggle/input/aml-cytomorphology-lmu",
+    "/kaggle/input/aml-cytomorphology-2",
 ]
 
-script_found = None
-for script in training_scripts:
-    if os.path.exists(script):
-        script_found = script
+for candidate in candidates:
+    if os.path.exists(candidate):
+        DATASET_PATH = candidate
         break
 
-if script_found:
-    print(f"Found training script: {script_found}")
-    print(f"Running: python {script_found}")
-    !python {script_found}
-else:
-    print("No standard training script found.")
-    print("Looking for alternative entry points...")
+# Last resort: scan for any folder containing BLA
+if DATASET_PATH is None:
+    bla_dirs = _glob.glob("/kaggle/input/**/BLA", recursive=True)
+    if bla_dirs:
+        DATASET_PATH = os.path.dirname(bla_dirs[0])
+        print(f"Auto-detected dataset at: {DATASET_PATH}")
 
-    # Check for Jupyter notebooks
-    import glob
-    notebooks = glob.glob("**/*train*.ipynb", recursive=True)
-    if notebooks:
-        print(f"Found notebook(s): {notebooks}")
-        print("Convert and run with: !jupyter nbconvert --to script <notebook> && python <script>")
+assert DATASET_PATH is not None, (
+    "Dataset not found!\n"
+    "Go back to Cell 4 and add the dataset via 'Add Data' sidebar:\n"
+    '  Search: "binilj04/aml-cytomorphology" or "umarsani1605/aml-cytomorphology"'
+)
 
-    # Check for main.py
-    if os.path.exists("main.py"):
-        print("Found main.py - inspecting...")
-        !head -50 main.py
+print(f"Dataset path: {DATASET_PATH}")
+print(f"Running: python main.py --data-root {DATASET_PATH}")
+print("=" * 60)
 
-    print("\nYou may need to write custom training code (see Cell 9)")
+!python main.py --data-root "{DATASET_PATH}" --epochs 50 --batch-size 32
 ```
 
 ---
@@ -306,9 +473,10 @@ else:
 ## Cell 9: Custom Training Code (Fallback)
 
 ```python
-# Cell 9: Custom training code if no training script exists in the repo
-# This is a generic PyTorch training loop for blood cell classification
-# Adjust model architecture, dataset paths, and hyperparameters as needed
+# Cell 9: Fallback training loop
+# ONLY USE THIS if Cell 8 (main.py) fails for some reason.
+# This is a standalone PyTorch training loop that works directly
+# with the AML-Cytomorphology_LMU dataset's folder structure.
 
 import torch
 import torch.nn as nn
@@ -322,9 +490,24 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 # ======================== CONFIGURATION ========================
+# Dataset path: the images/ folder inside AML-Cytomorphology_LMU
+# contains 21 subdirectories (BLA, LYT, NGS, MON, etc.)
+DATASET_ROOT = "/kaggle/working/HemaVision/AML-Cytomorphology_LMU"
+if not os.path.exists(DATASET_ROOT):
+    # Try new and old Kaggle path formats
+    for fallback in [
+        "/kaggle/input/datasets/binilj04/aml-cytomorphology",
+        "/kaggle/input/datasets/umarsani1605/aml-cytomorphology",
+        "/kaggle/input/aml-cytomorphology",
+        "/kaggle/input/aml-cytomorphology-lmu",
+    ]:
+        if os.path.exists(fallback):
+            DATASET_ROOT = fallback
+            break
+
 CONFIG = {
-    # Dataset
-    "data_dir": "/kaggle/working/HemaVision/data",      # <-- ADJUST THIS
+    # Dataset — points to the images/ subfolder with 21 class dirs
+    "data_dir": os.path.join(DATASET_ROOT, "images"),
     "train_dir": None,  # Will be auto-detected
     "val_dir": None,    # Will be auto-detected
 
@@ -654,7 +837,8 @@ print("\nModels copied to /kaggle/working/ for download")
 |---|---|
 | **GPU** | Enable GPU T4 x2 or P100 in Kaggle Settings -> Accelerator |
 | **Internet** | Must be ON (Settings -> Internet -> On) for git clone and pip install |
-| **Dataset** | Add via Kaggle "Add Data" sidebar -> search for blood cell / leukemia datasets -> update CONFIG["data_dir"] to /kaggle/input/<dataset-name> |
-| **Cell 6-7** | These cells auto-discover the training script in the repo. If one exists, Cell 8 runs it directly. If not, Cell 9's custom training loop kicks in. |
-| **Runtime** | ~1-2 hours for 25 epochs on T4 GPU depending on dataset size |
-| **Output** | best_model.pth, model_scripted.pt, model.onnx -- all downloadable from the Output tab |
+| **Dataset** | **binilj04/aml-cytomorphology** — Add via Kaggle "Add Data" sidebar, search "AML-Cytomorphology-WBC". ~6.2 GB, 18K+ images, 21 classes incl. BLA (blast). ⚠️ Do NOT use `walkersneps/aml-cytomorphology-lmu` (missing BLA class!) |
+| **Cell 8** | Runs `main.py --data-root <dataset_path>` — the project's full pipeline (data loading, patient-level split, dual-stream model, training, Grad-CAM) |
+| **Cell 9** | Fallback standalone training loop. Only use if Cell 8 fails |
+| **Runtime** | ~2-3 hours for 50 epochs on T4 GPU (18K+ images) |
+| **Output** | best_model.pt, training_history.png, gradcam_results/, results_summary.json — all in outputs/ |

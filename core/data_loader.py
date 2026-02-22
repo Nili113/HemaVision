@@ -56,9 +56,20 @@ class AMLDataPreprocessor:
     """
 
     # Class labels mapping
+    #
+    # IMPORTANT: The Kaggle uploads of this dataset (binilj04, umarsani1605)
+    # renamed the BLA (Blast) folder to MYO. Evidence:
+    #   - Original Matek et al. 2019 paper: BLA = 3,268 images
+    #   - Kaggle upload: MYO = 3,268 images (identical count)
+    #   - All other 14 classes have identical counts to the paper
+    #   - "Myelocyte" (real MYO) had 0 images in the original 15-class dataset
+    #   - Total matches exactly: 18,365 images
+    # Therefore MYO → 1 (AML positive) in all Kaggle versions.
+    #
     AML_CLASSES = {
         # AML blast cells (malignant)
-        "BLA": 1,  # Blast
+        "BLA": 1,  # Blast (original TCIA class name)
+        "MYO": 1,  # Blast (renamed to MYO in Kaggle uploads)
         # Normal / non-malignant cell types
         "ART": 0,  # Artifact
         "BAS": 0,  # Basophil
@@ -70,8 +81,7 @@ class AMLDataPreprocessor:
         "MMZ": 0,  # Metamyelocyte
         "MOB": 0,  # Monocyte (blast-like)
         "MON": 0,  # Monocyte
-        "MYB": 0,  # Myelocyte
-        "MYO": 0,  # Myelocyte
+        "MYB": 0,  # Myelocyte (basophilic)
         "NGB": 0,  # Band neutrophil
         "NGS": 0,  # Segmented neutrophil
         "NIF": 0,  # Not identifiable

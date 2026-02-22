@@ -457,6 +457,7 @@ class GradCAM:
         dataloader: torch.utils.data.DataLoader,
         num_samples: int = 10,
         save_dir: Optional[str] = None,
+        threshold: float = 0.5,
     ) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray, float]]:
         """
         Generate Grad-CAM visualizations for multiple samples.
@@ -465,6 +466,7 @@ class GradCAM:
             dataloader:  DataLoader to sample from
             num_samples: Number of samples to visualize
             save_dir:    Directory to save individual visualizations
+            threshold:   Classification threshold
 
         Returns:
             List of (original, heatmap, overlay, prediction) tuples
@@ -480,16 +482,19 @@ class GradCAM:
                     return results
 
                 save_path = None
+                gt_label = int(labels[i].item() > 0.5)
                 if save_dir:
                     from pathlib import Path
                     Path(save_dir).mkdir(parents=True, exist_ok=True)
-                    label_str = "blast" if labels[i].item() > 0.5 else "normal"
+                    label_str = "blast" if gt_label == 1 else "normal"
                     save_path = f"{save_dir}/gradcam_{count:03d}_{label_str}.png"
 
                 result = self.visualize(
                     image=images[i],
                     tabular=tabular[i],
                     save_path=save_path,
+                    ground_truth_label=gt_label,
+                    threshold=threshold,
                 )
                 results.append(result)
                 count += 1

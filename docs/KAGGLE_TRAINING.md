@@ -14,6 +14,7 @@ Complete Kaggle notebook code. Copy-paste each cell into a Kaggle notebook. Enab
 # Install backend/training dependencies
 !pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 !pip install -q timm albumentations opencv-python-headless pillow matplotlib scikit-learn pandas tqdm seaborn
+!pip install -q onnx onnxruntime  # Required for ONNX model export
 
 # Check if requirements.txt exists and install from it
 import os

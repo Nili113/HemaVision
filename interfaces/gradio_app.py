@@ -40,8 +40,7 @@ MODEL: Optional[DualStreamFusionModel] = None
 GRADCAM: Optional[GradCAM] = None
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TRANSFORM = get_eval_transforms()
-CONFIG = get_config()
-
+CONFIG = get_config()OPTIMAL_THRESHOLD: float = 0.5  # Updated when checkpoint is loaded
 # Feature configuration (must match training)
 TABULAR_FEATURE_NAMES = [
     "age_normalized", "sex_encoded",
@@ -51,9 +50,14 @@ TABULAR_FEATURE_NAMES = [
 
 def load_model(checkpoint_path: Optional[str] = None) -> DualStreamFusionModel:
     """Load the trained model or create a fresh one for demo."""
-    global MODEL, GRADCAM
+    global MODEL, GRADCAM, OPTIMAL_THRESHOLD
 
     if checkpoint_path and Path(checkpoint_path).exists():
+        # Peek at checkpoint for optimal threshold
+        ckpt = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
+        OPTIMAL_THRESHOLD = ckpt.get("optimal_threshold", 0.5)
+        logger.info(f"Using optimal threshold from checkpoint: {OPTIMAL_THRESHOLD:.4f}")
+
         model = AMLTrainer.load_checkpoint(
             checkpoint_path,
             num_tabular_features=len(TABULAR_FEATURE_NAMES),
@@ -122,7 +126,7 @@ def predict(
     gradcam_image = Image.fromarray(overlay)
 
     # ── Format result ────────────────────────────────────────
-    is_blast = prob > 0.5
+    is_blast = prob > OPTIMAL_THRESHOLD
     confidence = prob if is_blast else 1 - prob
 
     if is_blast:

@@ -65,6 +65,9 @@ TABULAR_FEATURE_NAMES = [
 # Updated when the checkpoint is loaded.
 NUM_MODEL_TABULAR_FEATURES: int = len(TABULAR_FEATURE_NAMES)
 
+# Optimal classification threshold (loaded from checkpoint).
+OPTIMAL_THRESHOLD: float = 0.5
+
 # ── Global model state ───────────────────────────────────────
 MODEL: Optional[DualStreamFusionModel] = None
 GRADCAM_ENGINE: Optional[GradCAM] = None
@@ -215,16 +218,18 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> Optio
 
 def load_model(checkpoint_path: Optional[str] = None):
     """Load the trained model."""
-    global MODEL, GRADCAM_ENGINE, NUM_MODEL_TABULAR_FEATURES
+    global MODEL, GRADCAM_ENGINE, NUM_MODEL_TABULAR_FEATURES, OPTIMAL_THRESHOLD
 
     if checkpoint_path and Path(checkpoint_path).exists():
-        # Peek at checkpoint to get num_tabular_features
+        # Peek at checkpoint to get num_tabular_features and optimal threshold
         ckpt = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
         saved_config = ckpt.get("config", {})
         NUM_MODEL_TABULAR_FEATURES = saved_config.get(
             "num_tabular_features", len(TABULAR_FEATURE_NAMES)
         )
+        OPTIMAL_THRESHOLD = ckpt.get("optimal_threshold", 0.5)
         logger.info(f"Checkpoint expects {NUM_MODEL_TABULAR_FEATURES} tabular features")
+        logger.info(f"Using optimal threshold from checkpoint: {OPTIMAL_THRESHOLD:.4f}")
 
         MODEL = AMLTrainer.load_checkpoint(
             checkpoint_path,
@@ -298,7 +303,7 @@ def run_prediction(
     inference_ms = (time.perf_counter() - start) * 1000
 
     # Format result
-    is_blast = prob > 0.5
+    is_blast = prob > OPTIMAL_THRESHOLD
     confidence = prob if is_blast else 1 - prob
 
     if is_blast:

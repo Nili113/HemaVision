@@ -166,13 +166,16 @@ def run_pipeline(config: HemaVisionConfig, eval_only: bool = False,
         )
         history = trainer.train()
 
+        # Find optimal classification threshold on validation set
+        optimal_threshold = trainer.find_optimal_threshold(val_loader)
+
         # Plot training curves
         plot_path = config.paths.results_dir / "training_history.png"
         plot_training_history(history, save_path=plot_path)
 
         # ── PHASE 5: Test Evaluation ─────────────────────────
         logger.info("Phase 5: Evaluating on test set...")
-        test_results = trainer.evaluate(test_loader)
+        test_results = trainer.evaluate(test_loader, threshold=optimal_threshold)
     else:
         logger.info("Skipping training (eval-only mode).")
         trainer = AMLTrainer(
@@ -183,7 +186,15 @@ def run_pipeline(config: HemaVisionConfig, eval_only: bool = False,
             pos_weight=pos_weight,
             device=device,
         )
-        test_results = trainer.evaluate(test_loader)
+        # Try to recover optimal threshold from checkpoint
+        optimal_threshold = 0.5
+        if checkpoint_path and Path(checkpoint_path).exists():
+            ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
+            optimal_threshold = ckpt.get("optimal_threshold", 0.5)
+            logger.info(f"Using threshold from checkpoint: {optimal_threshold:.4f}")
+        else:
+            optimal_threshold = trainer.find_optimal_threshold(val_loader)
+        test_results = trainer.evaluate(test_loader, threshold=optimal_threshold)
 
     # ──────────────────────────────────────────────────────────
     # PHASE 6: Grad-CAM Explainability
@@ -192,10 +203,13 @@ def run_pipeline(config: HemaVisionConfig, eval_only: bool = False,
 
     try:
         gradcam = GradCAM(model, target_layers=config.inference.gradcam_target_layers)
+        # Use optimal threshold so Grad-CAM labels match test evaluation
+        threshold = optimal_threshold if 'optimal_threshold' in dir() else 0.5
         gradcam.batch_visualize(
             dataloader=test_loader,
             num_samples=config.inference.gradcam_num_samples,
             save_dir=str(config.paths.gradcam_dir),
+            threshold=threshold,
         )
         logger.info(
             f"Saved {config.inference.gradcam_num_samples} Grad-CAM "
@@ -209,10 +223,11 @@ def run_pipeline(config: HemaVisionConfig, eval_only: bool = False,
     # ──────────────────────────────────────────────────────────
     logger.info("Phase 7: Exporting model and generating summary...")
 
-    # Save final model (.pt)
+    # Save final model (.pt) — include optimal threshold for inference
     model_path = config.paths.checkpoints_dir / "final_model.pt"
     torch.save({
         "model_state_dict": model.state_dict(),
+        "optimal_threshold": optimal_threshold if 'optimal_threshold' in dir() else 0.5,
         "config": {
             "backbone": config.model.backbone,
             "num_tabular_features": num_features,
@@ -224,11 +239,20 @@ def run_pipeline(config: HemaVisionConfig, eval_only: bool = False,
     # Export ONNX model
     onnx_path = config.paths.checkpoints_dir / "final_model.onnx"
     try:
+        import importlib
+        if importlib.util.find_spec("onnx") is None:
+            logger.warning(
+                "ONNX package not installed. Run: pip install onnx onnxruntime\n"
+                "  Skipping ONNX export."
+            )
+            raise ImportError("onnx not installed")
+
         model.eval()
-        dummy_image = torch.randn(1, 3, 224, 224).to(device)
-        dummy_tabular = torch.randn(1, num_features).to(device)
+        model_cpu = model.cpu()
+        dummy_image = torch.randn(1, 3, 224, 224)
+        dummy_tabular = torch.randn(1, num_features)
         torch.onnx.export(
-            model,
+            model_cpu,
             (dummy_image, dummy_tabular),
             str(onnx_path),
             input_names=["image", "tabular"],
@@ -240,9 +264,12 @@ def run_pipeline(config: HemaVisionConfig, eval_only: bool = False,
             },
             opset_version=17,
         )
+        # Move model back to original device
+        model.to(device)
         logger.info(f"ONNX model exported to {onnx_path}")
     except Exception as e:
         logger.warning(f"ONNX export failed: {e}")
+        model.to(device)
 
     # Generate results summary
     elapsed = time.time() - start_time

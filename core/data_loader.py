@@ -437,10 +437,14 @@ class AMLDataPreprocessor:
             self._split_by_image_stratified(train_r, val_r, test_r, seed)
 
         # Compute class weights from training set for weighted loss
+        # Use sqrt-dampened weighting to avoid over-prediction of the
+        # minority class.  Raw neg/pos ≈ 4.6 pushes the model too hard
+        # toward predicting blast → many false positives.
+        # sqrt(neg/pos) ≈ 2.15 is a gentler, well-established alternative.
         train_labels = self.train_df["label"]
         pos_count = train_labels.sum()
         neg_count = len(train_labels) - pos_count
-        self.pos_weight = neg_count / max(pos_count, 1)
+        self.pos_weight = float(np.sqrt(neg_count / max(pos_count, 1)))
 
         logger.info(
             f"Split complete:\n"

@@ -42,6 +42,7 @@ from sklearn.metrics import (
     recall_score,
     f1_score,
     roc_auc_score,
+    roc_curve,
     confusion_matrix,
     classification_report,
 )
@@ -192,6 +193,7 @@ class AMLTrainer:
         # Best model state
         self.best_val_auc = 0.0
         self.best_model_state = None
+        self.optimal_threshold = 0.5  # Updated after training via find_optimal_threshold()
 
     def train(self) -> Dict:
         """
@@ -373,14 +375,75 @@ class AMLTrainer:
 
         return metrics
 
+    def find_optimal_threshold(
+        self,
+        val_loader: Optional[DataLoader] = None,
+    ) -> float:
+        """
+        Find the optimal classification threshold by maximizing F1 on the
+        validation set's ROC curve.
+
+        With weighted BCE loss the model's raw probabilities are shifted
+        toward the positive class.  Using 0.5 as the threshold then causes
+        many false positives.  This method sweeps all thresholds from the
+        ROC curve and picks the one that maximizes F1.
+
+        Returns:
+            Optimal threshold (float).
+        """
+        loader = val_loader or self.val_loader
+        self.model.eval()
+
+        all_probs = []
+        all_labels = []
+
+        with torch.no_grad():
+            for images, tabular, labels in loader:
+                images = images.to(self.device)
+                tabular = tabular.to(self.device)
+                logits = self.model(images, tabular)
+                probs = torch.sigmoid(logits)
+                all_probs.extend(probs.cpu().numpy().flatten())
+                all_labels.extend(labels.cpu().numpy().flatten())
+
+        all_labels_np = np.array(all_labels)
+        all_probs_np = np.array(all_probs)
+
+        # Sweep thresholds from the ROC curve
+        fpr, tpr, thresholds = roc_curve(all_labels_np, all_probs_np)
+
+        best_f1 = 0.0
+        best_thresh = 0.5
+
+        for thresh in thresholds:
+            preds = (all_probs_np >= thresh).astype(float)
+            f1 = f1_score(all_labels_np, preds, zero_division=0)
+            if f1 > best_f1:
+                best_f1 = f1
+                best_thresh = float(thresh)
+
+        self.optimal_threshold = best_thresh
+        logger.info(
+            f"Optimal threshold: {best_thresh:.4f}  "
+            f"(val F1={best_f1:.4f} vs F1@0.5={f1_score(all_labels_np, (all_probs_np >= 0.5).astype(float), zero_division=0):.4f})"
+        )
+        return best_thresh
+
     @torch.no_grad()
-    def evaluate(self, test_loader: DataLoader) -> Dict:
+    def evaluate(self, test_loader: DataLoader, threshold: Optional[float] = None) -> Dict:
         """
         Evaluate the model on the test set with comprehensive metrics.
+
+        Args:
+            test_loader: DataLoader for the test split.
+            threshold:   Classification threshold. If None, uses the
+                         optimal threshold found on the validation set
+                         (falls back to 0.5 if not yet computed).
 
         Returns:
             Dict with all test metrics including confusion matrix.
         """
+        thresh = threshold if threshold is not None else self.optimal_threshold
         self.model.eval()
         all_probs = []
         all_preds = []
@@ -392,7 +455,7 @@ class AMLTrainer:
 
             logits = self.model(images, tabular)
             probs = torch.sigmoid(logits)
-            preds = (probs > 0.5).float()
+            preds = (probs > thresh).float()
 
             all_probs.extend(probs.cpu().numpy().flatten())
             all_preds.extend(preds.cpu().numpy().flatten())
@@ -416,6 +479,7 @@ class AMLTrainer:
         )
 
         results = {
+            "threshold": thresh,
             "accuracy": accuracy_score(all_labels_np, all_preds_np),
             "precision": precision_score(all_labels_np, all_preds_np, zero_division=0),
             "recall": recall_score(all_labels_np, all_preds_np, zero_division=0),
@@ -430,7 +494,7 @@ class AMLTrainer:
         # Pretty print results
         logger.info(
             f"\n{'━' * 50}\n"
-            f"  TEST SET RESULTS\n"
+            f"  TEST SET RESULTS  (threshold={thresh:.4f})\n"
             f"{'━' * 50}\n"
             f"  Accuracy:  {results['accuracy']:.4f}\n"
             f"  Precision: {results['precision']:.4f}\n"
@@ -459,6 +523,7 @@ class AMLTrainer:
             "optimizer_state_dict": self.optimizer.state_dict(),
             "scheduler_state_dict": self.scheduler.state_dict(),
             "best_val_auc": self.best_val_auc,
+            "optimal_threshold": self.optimal_threshold,
             "metrics": metrics,
             "config": {
                 "backbone": self.config.model.backbone,

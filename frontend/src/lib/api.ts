@@ -12,11 +12,6 @@ const api = axios.create({
 
 export interface PredictionRequest {
   image_base64: string;
-  age: number;
-  sex: string;
-  npm1_mutated: boolean;
-  flt3_mutated: boolean;
-  genetic_other: boolean;
 }
 
 export interface PredictionResponse {
@@ -28,11 +23,7 @@ export interface PredictionResponse {
   gradcam_base64: string | null;
   inference_time_ms: number;
   patient_context: {
-    age: number;
-    sex: string;
-    npm1_mutated: boolean;
-    flt3_mutated: boolean;
-    genetic_other: boolean;
+    morphological_features: string;
   };
 }
 
@@ -69,25 +60,11 @@ export async function predict(request: PredictionRequest): Promise<PredictionRes
   return data;
 }
 
-export async function predictWithUpload(
-  file: File,
-  patientData: {
-    age: number;
-    sex: string;
-    npm1_mutated: boolean;
-    flt3_mutated: boolean;
-    genetic_other: boolean;
-  }
-): Promise<PredictionResponse> {
+export async function predictWithUpload(file: File): Promise<PredictionResponse> {
   const formData = new FormData();
   formData.append('file', file);
-  formData.append('age', String(patientData.age));
-  formData.append('sex', patientData.sex);
-  formData.append('npm1_mutated', String(patientData.npm1_mutated));
-  formData.append('flt3_mutated', String(patientData.flt3_mutated));
-  formData.append('genetic_other', String(patientData.genetic_other));
 
-  const { data } = await api.post<PredictionResponse>('/predict/upload', formData, {
+  const { data } = await api.post<PredictionResponse>('/predict/image', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   });
   return data;
@@ -117,11 +94,6 @@ export interface AnalysisRecord {
   risk_level: string;
   risk_color: string;
   inference_time_ms: number;
-  patient_age: number;
-  patient_sex: string;
-  npm1_mutated: boolean;
-  flt3_mutated: boolean;
-  genetic_other: boolean;
   image_filename: string | null;
   gradcam_base64: string | null;
   created_at: string;

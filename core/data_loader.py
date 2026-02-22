@@ -26,6 +26,11 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler, LabelEncoder
 
 from utils.config import HemaVisionConfig, get_config
+from core.morphology import (
+    extract_features_for_dataframe,
+    MORPHOLOGY_FEATURE_NAMES,
+    NUM_MORPHOLOGY_FEATURES,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -311,16 +316,15 @@ class AMLDataPreprocessor:
 
     def _create_image_only_dataframe(self, images_df: pd.DataFrame) -> pd.DataFrame:
         """
-        Create a DataFrame with zero-valued clinical features.
+        Create a DataFrame with placeholder clinical columns.
 
-        Used when no patient_data.csv exists. All tabular features are set
-        to zero so the model learns to rely 100% on cell images. The
-        dual-stream architecture is preserved — on the website, if a user
-        provides real clinical data it will contribute to the prediction.
+        Used when no patient_data.csv exists. Clinical columns are
+        added for compatibility but prepare_features() will compute
+        morphological features from the images themselves.
         """
         df = images_df.copy()
 
-        # Fixed zero-valued clinical features
+        # Placeholder clinical columns (not used by the model)
         df["age"] = 0
         df["sex"] = "Unknown"
         df["npm1_mutated"] = 0
@@ -335,13 +339,23 @@ class AMLDataPreprocessor:
 
     def prepare_features(self) -> Tuple[List[str], int]:
         """
-        Encode and normalize clinical/tabular features.
+        Compute morphological features for the tabular stream.
 
-        Transforms:
-        - age: StandardScaler normalization
-        - sex: One-hot encoding (Male=1, Female=0)
-        - genetic_subtype: One-hot encoding
-        - npm1_mutated, flt3_mutated, genetic_other: Binary (already 0/1)
+        Strategy:
+        ┌──────────────────────────────────────────────────────────┐
+        │  Extract 20 handcrafted cytological features from each   │
+        │  cell image:                                             │
+        │    • Geometry: area, perimeter, circularity, eccentricity│
+        │    • Nucleus:  N/C ratio, nuclear area, irregularity     │
+        │    • Colour:   RGB means, HSV means, stain stats         │
+        │    • Texture:  GLCM contrast, homogeneity, energy, corr  │
+        │    • Shape:    solidity                                  │
+        └──────────────────────────────────────────────────────────┘
+
+        These features encode domain knowledge — the same criteria
+        a haematologist evaluates — so the fusion layer can learn
+        to combine deep visual patterns with clinically meaningful
+        morphological descriptors.
 
         Returns:
             Tuple of (feature_column_names, num_features)
@@ -351,47 +365,31 @@ class AMLDataPreprocessor:
 
         df = self.unified_df.copy()
 
-        # Encode sex → binary
-        df["sex_encoded"] = (df["sex"].str.lower() == "male").astype(float)
-
-        # Normalize age
-        df["age_normalized"] = self.scaler.fit_transform(
-            df[["age"]].astype(float)
+        # ── Morphological feature extraction ─────────────────
+        logger.info(
+            f"Extracting {NUM_MORPHOLOGY_FEATURES} morphological features "
+            f"from {len(df)} images..."
         )
 
-        # One-hot encode genetic subtype
-        if "genetic_subtype" in df.columns:
-            genetic_dummies = pd.get_dummies(
-                df["genetic_subtype"], prefix="gene"
-            ).astype(float)
-            df = pd.concat([df, genetic_dummies], axis=1)
-            genetic_cols = list(genetic_dummies.columns)
-        else:
-            genetic_cols = []
-
-        # Ensure binary mutation columns exist
-        for col in ["npm1_mutated", "flt3_mutated", "genetic_other"]:
-            if col not in df.columns:
-                df[col] = 0.0
-            df[col] = df[col].astype(float)
-
-        # Define feature columns
-        self.tabular_feature_names = (
-            ["age_normalized", "sex_encoded",
-             "npm1_mutated", "flt3_mutated", "genetic_other"]
-            + genetic_cols
+        image_paths = df["image_path"].tolist()
+        morph_matrix = extract_features_for_dataframe(
+            image_paths,
+            normalize=self.config.morphology.normalize
+            if hasattr(self.config, 'morphology') else True,
+            show_progress=True,
         )
-        self.num_tabular_features = len(self.tabular_feature_names)
 
-        # Verify all feature columns exist and are numeric
-        for col in self.tabular_feature_names:
-            if col not in df.columns:
-                df[col] = 0.0
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
+        # Attach morphological features as columns
+        for i, name in enumerate(MORPHOLOGY_FEATURE_NAMES):
+            df[name] = morph_matrix[:, i].astype(np.float32)
+
+        # ── Define feature columns ───────────────────────────
+        self.tabular_feature_names = list(MORPHOLOGY_FEATURE_NAMES)
+        self.num_tabular_features = NUM_MORPHOLOGY_FEATURES
 
         self.unified_df = df
         logger.info(
-            f"Prepared {self.num_tabular_features} tabular features: "
+            f"Prepared {self.num_tabular_features} morphological features: "
             f"{self.tabular_feature_names}"
         )
         return self.tabular_feature_names, self.num_tabular_features

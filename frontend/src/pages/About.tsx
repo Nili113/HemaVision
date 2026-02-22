@@ -79,8 +79,8 @@ export default function About() {
             Built to earn clinical trust.
           </h1>
           <p className="text-base text-slate-400 max-w-[520px] mt-5 leading-relaxed">
-            A multimodal diagnostic assistant that fuses deep learning on cell imagery
-            with patient genetics — and explains every prediction.
+            A hybrid multimodal architecture that fuses deep CNN features with
+            handcrafted morphological analysis — and explains every prediction.
           </p>
         </FadeIn>
       </section>
@@ -97,18 +97,23 @@ export default function About() {
 
           <FadeIn delay={0.1}>
             <div className="max-w-xl mx-auto space-y-0">
-              {/* Inputs row */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <PipelineNode icon="image" label="Cell Image" sub="224 × 224 × 3" accent="#137fec" />
-                <PipelineNode icon="person" label="Clinical Data" sub="age, sex, genes" accent="#8b5cf6" />
-              </div>
+              {/* Input */}
+              <PipelineNode icon="image" label="Cell Image" sub="224 × 224 × 3 microscopy" accent="#137fec" />
 
               <PipelineConnector />
 
-              {/* Streams row */}
+              {/* Dual streams */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <PipelineNode icon="hub" label="Visual Stream" sub="ResNet-50 → 2048-d" accent="#137fec" highlight />
-                <PipelineNode icon="schema" label="Tabular Stream" sub="MLP (3 layers) → 32-d" accent="#8b5cf6" highlight />
+                <PipelineNode icon="science" label="Morphology Stream" sub="20 features → MLP → 32-d" accent="#8b5cf6" highlight />
+              </div>
+
+              {/* Feature detail */}
+              <div className="px-4 py-3 rounded-lg border border-slate-800/40 text-xs text-slate-500 leading-relaxed" style={{ background: 'rgba(139,92,246,0.03)' }}>
+                <span className="text-slate-400 font-medium">Morphological features:</span>{' '}
+                cell area, perimeter, circularity, eccentricity, nuclear area, N:C ratio,
+                nuclear irregularity, RGB/HSV colour stats, stain intensity, GLCM texture (4),
+                solidity — extracted via Otsu + HSV segmentation
               </div>
 
               <PipelineFork />
@@ -153,7 +158,7 @@ export default function About() {
                 num: '01',
                 icon: 'merge',
                 title: 'Multimodal Fusion',
-                body: 'Combines visual features from ResNet-50 with clinical tabular data via late fusion for comprehensive diagnosis.',
+                body: 'Fuses deep CNN features from ResNet-50 with 20 handcrafted morphological features (geometry, nucleus, colour, texture) via late fusion.',
                 color: '#137fec',
               },
               {

@@ -152,6 +152,15 @@ class AugmentationConfig:
 
 
 @dataclass
+class MorphologyConfig:
+    """Morphological feature extraction configuration."""
+    enabled: bool = True  # Use morphological features as tabular stream
+    num_features: int = 20  # Number of handcrafted features
+    normalize: bool = True  # Z-score normalize features
+    # Feature extraction is deterministic — no augmentation config needed
+
+
+@dataclass
 class InferenceConfig:
     """Inference and deployment configuration."""
     device: str = "auto"  # "auto", "cuda", "cpu"
@@ -169,6 +178,7 @@ class HemaVisionConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     training: TrainingConfig = field(default_factory=TrainingConfig)
     augmentation: AugmentationConfig = field(default_factory=AugmentationConfig)
+    morphology: MorphologyConfig = field(default_factory=MorphologyConfig)
     inference: InferenceConfig = field(default_factory=InferenceConfig)
 
     def __post_init__(self):

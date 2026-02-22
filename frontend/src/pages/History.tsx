@@ -227,18 +227,17 @@ export default function History() {
                             </div>
 
                             {/* Detail grid */}
-                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm mb-4 mt-3">
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm mb-4 mt-3">
                               <DetailItem label="Probability" value={`${(record.probability * 100).toFixed(2)}%`} />
                               <DetailItem label="Confidence" value={`${(record.confidence * 100).toFixed(2)}%`} />
                               <DetailItem label="Inference" value={`${record.inference_time_ms.toFixed(1)}ms`} />
-                              <DetailItem label="Patient" value={`${record.patient_age}y / ${record.patient_sex}`} />
                             </div>
 
-                            {/* Genetic markers */}
+                            {/* Analysis method */}
                             <div className="flex flex-wrap gap-2 mb-4">
-                              <MarkerChip label="NPM1" active={record.npm1_mutated} />
-                              <MarkerChip label="FLT3" active={record.flt3_mutated} />
-                              <MarkerChip label="Other" active={record.genetic_other} />
+                              <span className="px-2.5 py-1 rounded-md text-xs font-medium border bg-primary/10 text-primary border-primary/20">
+                                Multimodal: CNN + Morphology
+                              </span>
                             </div>
 
                             {/* Actions */}
@@ -306,20 +305,5 @@ function DetailItem({ label, value }: { label: string; value: string }) {
       <div className="text-xs text-slate-500 uppercase tracking-wider">{label}</div>
       <div className="text-sm font-medium text-white mt-0.5">{value}</div>
     </div>
-  );
-}
-
-function MarkerChip({ label, active }: { label: string; active: boolean }) {
-  return (
-    <span
-      className={clsx(
-        'px-2.5 py-1 rounded-md text-xs font-medium border',
-        active
-          ? 'bg-red-500/10 text-red-400 border-red-500/20'
-          : 'bg-slate-800 text-slate-400 border-slate-700'
-      )}
-    >
-      {label}: {active ? 'Positive' : 'Negative'}
-    </span>
   );
 }

@@ -7,8 +7,8 @@ Architecture:
 ┌─────────────────────────────────────────────────────┐
 │                   INPUT LAYER                       │
 │  ┌───────────────────┐  ┌───────────────────────┐   │
-│  │  Cell Image       │  │  Clinical Features    │   │
-│  │  (224×224×3)      │  │  (age, sex, genetics) │   │
+│  │  Cell Image       │  │  Morphological Feats  │   │
+│  │  (224×224×3)      │  │  (20 handcrafted)     │   │
 │  └────────┬──────────┘  └──────────┬────────────┘   │
 │           │                        │                │
 │  ┌────────▼──────────┐  ┌──────────▼────────────┐   │
@@ -29,8 +29,13 @@ Architecture:
 │  └──────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────┘
 
+Multimodal Design:
+  Stream 1 — Deep learned features (ResNet50 backbone)
+  Stream 2 — Handcrafted morphological features:
+             geometry, nucleus, colour, texture, shape
+
 Mathematical Formulation:
-  f(x_img, x_tab; Θ) = σ(W₂ · ReLU(W₁ · [f_CNN(x_img) ⊕ f_MLP(x_tab)] + b₁) + b₂)
+  f(x_img, x_morph; Θ) = σ(W₂ · ReLU(W₁ · [f_CNN(x_img) ⊕ f_MLP(x_morph)] + b₁) + b₂)
 
 Author: Firoj
 """
@@ -49,15 +54,16 @@ logger = logging.getLogger(__name__)
 
 class TabularStream(nn.Module):
     """
-    Multi-Layer Perceptron for encoding tabular/clinical features.
+    Multi-Layer Perceptron for encoding morphological features.
 
-    Transforms raw clinical features (age, sex, genetic markers)
-    into a dense representation suitable for fusion with visual features.
+    Transforms handcrafted cytological features (geometry, nucleus,
+    colour, texture, shape) into a dense representation suitable
+    for fusion with deep visual features.
 
     Architecture:
         Input → [FC → BatchNorm → ReLU → Dropout] × 3 → Output
 
-    Input:  (batch, num_features) — e.g., (32, 11)
+    Input:  (batch, num_features) — e.g., (32, 20)
     Output: (batch, hidden_dims[-1]) — e.g., (32, 32)
     """
 
@@ -176,19 +182,19 @@ class DualStreamFusionModel(nn.Module):
     """
     Dual-Stream Late Fusion Network for AML detection.
 
-    Combines visual features from microscopic cell images with
-    tabular features from patient clinical data via late fusion
+    Combines deep visual features from microscopic cell images with
+    handcrafted morphological features via late fusion
     (concatenation after independent encoding).
 
     Args:
-        num_tabular_features: Number of input clinical features
+        num_tabular_features: Number of morphological features (default: 20)
         config: Model configuration object
 
     Example:
-        >>> model = DualStreamFusionModel(num_tabular_features=11)
+        >>> model = DualStreamFusionModel(num_tabular_features=20)
         >>> image = torch.randn(4, 3, 224, 224)
-        >>> tabular = torch.randn(4, 11)
-        >>> output = model(image, tabular)
+        >>> morphology = torch.randn(4, 20)
+        >>> output = model(image, morphology)
         >>> output.shape
         torch.Size([4, 1])
     """
@@ -250,7 +256,7 @@ class DualStreamFusionModel(nn.Module):
 
         Args:
             image:   (batch, 3, 224, 224) — cell microscopy image
-            tabular: (batch, num_features) — clinical/tabular features
+            tabular: (batch, num_features) — morphological features
 
         Returns:
             (batch, 1) — raw logits (apply sigmoid for probability)

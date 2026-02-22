@@ -4,7 +4,11 @@ HemaVision Dataset & DataLoader
 Custom PyTorch Dataset for the multimodal AML pipeline.
 
 Each sample yields a triplet:
-  (image_tensor, tabular_tensor, label)
+  (image_tensor, morphology_tensor, label)
+
+The morphological features are pre-computed by the data loader
+and stored in the DataFrame. The Dataset reads them as tabular
+columns alongside the image and label.
 
 Includes separate augmentation pipelines for training and evaluation.
 
@@ -79,9 +83,9 @@ class AMLDataset(Dataset):
     PyTorch Dataset for the AML multimodal pipeline.
 
     Each __getitem__ returns:
-        image:   (3, 224, 224) — augmented cell microscopy image
-        tabular: (num_features,) — normalized clinical features
-        label:   scalar — 0 (normal) or 1 (AML blast)
+        image:      (3, 224, 224) — augmented cell microscopy image
+        morphology: (num_features,) — handcrafted morphological features
+        label:      scalar — 0 (normal) or 1 (AML blast)
 
     Args:
         dataframe:       DataFrame with columns [image_path, label, + tabular features]

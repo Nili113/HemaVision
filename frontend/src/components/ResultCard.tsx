@@ -75,33 +75,17 @@ export default function ResultCard({ result }: ResultCardProps) {
           />
         </div>
 
-        {/* Patient Context */}
-        {result.patient_context && (
-          <div className="mt-8 pt-6 border-t border-slate-800">
-            <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-4">
-              Patient Context
-            </div>
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 text-center">
-              <ContextItem label="Age" value={`${result.patient_context.age}y`} />
-              <ContextItem label="Sex" value={result.patient_context.sex} />
-              <ContextItem
-                label="NPM1"
-                value={result.patient_context.npm1_mutated ? 'Pos' : 'Neg'}
-                positive={result.patient_context.npm1_mutated}
-              />
-              <ContextItem
-                label="FLT3"
-                value={result.patient_context.flt3_mutated ? 'Pos' : 'Neg'}
-                positive={result.patient_context.flt3_mutated}
-              />
-              <ContextItem
-                label="Other"
-                value={result.patient_context.genetic_other ? 'Pos' : 'Neg'}
-                positive={result.patient_context.genetic_other}
-              />
-            </div>
+        {/* Analysis Method */}
+        <div className="mt-8 pt-6 border-t border-slate-800">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-4">
+            Analysis Method
           </div>
-        )}
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-center">
+            <ContextItem label="Visual" value="ResNet-50" />
+            <ContextItem label="Morphology" value="20 Features" />
+            <ContextItem label="Fusion" value="Late (2080-d)" />
+          </div>
+        </div>
 
         {/* Recommendation */}
         {!isNormal && (
@@ -164,23 +148,14 @@ function MetricBar({
 function ContextItem({
   label,
   value,
-  positive,
 }: {
   label: string;
   value: string;
-  positive?: boolean;
 }) {
   return (
     <div>
       <div className="text-xs text-slate-500 uppercase tracking-wider">{label}</div>
-      <div
-        className={clsx(
-          'text-sm font-semibold mt-0.5',
-          positive === true ? 'text-red-400' : positive === false ? 'text-emerald-400' : 'text-white'
-        )}
-      >
-        {value}
-      </div>
+      <div className="text-sm font-semibold mt-0.5 text-white">{value}</div>
     </div>
   );
 }

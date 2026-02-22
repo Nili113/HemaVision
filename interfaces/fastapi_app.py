@@ -36,7 +36,7 @@ from typing import List, Optional
 import numpy as np
 import torch
 from PIL import Image
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, Depends, Header
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -45,6 +45,11 @@ from core.model import DualStreamFusionModel
 from core.gradcam import GradCAM
 from core.dataset import get_eval_transforms
 from core.train import AMLTrainer
+from core.morphology import (
+    extract_single_image_features,
+    MORPHOLOGY_FEATURE_NAMES,
+    NUM_MORPHOLOGY_FEATURES,
+)
 from utils.config import get_config
 from utils.database import AnalysisDatabase, AnalysisRecord, UserRecord
 
@@ -55,10 +60,7 @@ CONFIG = get_config()
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TRANSFORM = get_eval_transforms()
 
-TABULAR_FEATURE_NAMES = [
-    "age_normalized", "sex_encoded",
-    "npm1_mutated", "flt3_mutated", "genetic_other",
-]
+TABULAR_FEATURE_NAMES = list(MORPHOLOGY_FEATURE_NAMES)  # 20 morphological features
 
 # Actual number of features the model expects (may be larger due to
 # one-hot encoded genetic_subtype columns created during training).
@@ -84,13 +86,8 @@ class HealthResponse(BaseModel):
 
 
 class PredictionRequest(BaseModel):
-    """Request body for prediction (JSON mode)."""
+    """Request body for prediction (JSON mode). Only image is required."""
     image_base64: str = Field(..., description="Base64-encoded cell image")
-    age: int = Field(60, ge=18, le=100, description="Patient age in years")
-    sex: str = Field("Male", pattern="^(Male|Female)$", description="Patient sex")
-    npm1_mutated: bool = Field(False, description="NPM1 mutation status")
-    flt3_mutated: bool = Field(False, description="FLT3 mutation status")
-    genetic_other: bool = Field(False, description="Other genetic mutations")
 
 
 class PredictionResponse(BaseModel):
@@ -252,14 +249,9 @@ def load_model(checkpoint_path: Optional[str] = None):
 
 def run_prediction(
     image: Image.Image,
-    age: int,
-    sex: str,
-    npm1: bool,
-    flt3: bool,
-    genetic_other: bool,
     include_gradcam: bool = True,
 ) -> PredictionResponse:
-    """Core prediction function."""
+    """Core prediction function using morphological feature extraction."""
     global MODEL, GRADCAM_ENGINE
 
     if MODEL is None:
@@ -271,18 +263,16 @@ def run_prediction(
     image_pil = image.convert("RGB")
     image_tensor = TRANSFORM(image_pil).unsqueeze(0).to(DEVICE)
 
-    # Prepare tabular — 5 raw features, zero-padded to match model width
-    age_norm = (age - 55.0) / 15.0
-    sex_enc = 1.0 if sex == "Male" else 0.0
-    raw_features = [age_norm, sex_enc, float(npm1), float(flt3), float(genetic_other)]
-    # Pad with zeros for one-hot genetic_subtype columns the model expects
-    pad_len = NUM_MODEL_TABULAR_FEATURES - len(raw_features)
-    if pad_len > 0:
-        raw_features.extend([0.0] * pad_len)
-    tabular = torch.tensor(
-        [raw_features[:NUM_MODEL_TABULAR_FEATURES]],
-        dtype=torch.float32,
-    ).to(DEVICE)
+    # Extract morphological features from the image
+    morph_vec = extract_single_image_features(image_pil, normalize=True)
+    tabular = torch.tensor(morph_vec, dtype=torch.float32).unsqueeze(0).to(DEVICE)
+
+    # Pad or truncate to match model’s expected feature count
+    if tabular.shape[1] < NUM_MODEL_TABULAR_FEATURES:
+        pad = torch.zeros(1, NUM_MODEL_TABULAR_FEATURES - tabular.shape[1], device=DEVICE)
+        tabular = torch.cat([tabular, pad], dim=1)
+    elif tabular.shape[1] > NUM_MODEL_TABULAR_FEATURES:
+        tabular = tabular[:, :NUM_MODEL_TABULAR_FEATURES]
 
     # Prediction + Grad-CAM
     gradcam_b64 = None
@@ -324,11 +314,8 @@ def run_prediction(
         gradcam_base64=gradcam_b64,
         inference_time_ms=round(inference_ms, 2),
         patient_context={
-            "age": age,
-            "sex": sex,
-            "npm1_mutated": npm1,
-            "flt3_mutated": flt3,
-            "genetic_other": genetic_other,
+            "morphological_features": "auto-extracted",
+            "num_features": NUM_MORPHOLOGY_FEATURES,
         },
     )
 
@@ -339,8 +326,9 @@ app = FastAPI(
     title="HemaVision API",
     description=(
         "Production REST API for Acute Myeloid Leukemia detection.\n\n"
-        "Combines microscopic cell imagery with patient clinical data "
-        "for multimodal AI diagnosis with Grad-CAM explainability."
+        "Combines deep visual features from microscopic cell imagery with "
+        "handcrafted morphological analysis for multimodal AI diagnosis "
+        "with Grad-CAM explainability."
     ),
     version="1.0.0",
     docs_url="/docs",
@@ -402,15 +390,12 @@ async def predict_json(request: PredictionRequest):
     """
     Predict from JSON body with base64-encoded image.
 
+    Only requires the cell image — morphological features are extracted automatically.
+
     Example request:
     ```json
     {
-        "image_base64": "<base64 string>",
-        "age": 65,
-        "sex": "Male",
-        "npm1_mutated": true,
-        "flt3_mutated": false,
-        "genetic_other": false
+        "image_base64": "<base64 string>"
     }
     ```
     """
@@ -420,14 +405,7 @@ async def predict_json(request: PredictionRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
-    result = run_prediction(
-        image=image,
-        age=request.age,
-        sex=request.sex,
-        npm1=request.npm1_mutated,
-        flt3=request.flt3_mutated,
-        genetic_other=request.genetic_other,
-    )
+    result = run_prediction(image=image)
     _save_to_db(result)
     return result
 
@@ -435,13 +413,24 @@ async def predict_json(request: PredictionRequest):
 @app.post("/predict/upload", response_model=PredictionResponse)
 async def predict_upload(
     file: UploadFile = File(...),
-    age: int = Form(60),
-    sex: str = Form("Male"),
-    npm1_mutated: bool = Form(False),
-    flt3_mutated: bool = Form(False),
-    genetic_other: bool = Form(False),
 ):
-    """Predict from multipart form upload."""
+    """Predict from multipart form upload. Only the image file is required."""
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
+
+    result = run_prediction(image=image)
+    _save_to_db(result, image_filename=file.filename)
+    return result
+
+
+@app.post("/predict/image", response_model=PredictionResponse)
+async def predict_image_only(
+    file: UploadFile = File(...),
+):
+    """Image-only prediction — upload a blood slide, get a diagnosis. No clinical data needed."""
     try:
         contents = await file.read()
         image = Image.open(io.BytesIO(contents))
@@ -450,11 +439,11 @@ async def predict_upload(
 
     result = run_prediction(
         image=image,
-        age=age,
-        sex=sex,
-        npm1=npm1_mutated,
-        flt3=flt3_mutated,
-        genetic_other=genetic_other,
+        age=55,
+        sex="Male",
+        npm1=False,
+        flt3=False,
+        genetic_other=False,
     )
     _save_to_db(result, image_filename=file.filename)
     return result
@@ -472,11 +461,6 @@ async def batch_predict(request: BatchPredictionRequest):
             image = Image.open(io.BytesIO(image_bytes))
             result = run_prediction(
                 image=image,
-                age=pred_req.age,
-                sex=pred_req.sex,
-                npm1=pred_req.npm1_mutated,
-                flt3=pred_req.flt3_mutated,
-                genetic_other=pred_req.genetic_other,
                 include_gradcam=False,  # Skip Grad-CAM for batch speed
             )
             results.append(result)
@@ -550,7 +534,6 @@ def _save_to_db(
     if DB is None:
         return
     try:
-        ctx = result.patient_context
         record = AnalysisRecord(
             prediction=result.prediction,
             probability=result.probability,
@@ -558,11 +541,11 @@ def _save_to_db(
             risk_level=result.risk_level,
             risk_color=result.risk_color,
             inference_time_ms=result.inference_time_ms,
-            patient_age=ctx.get("age", 0),
-            patient_sex=ctx.get("sex", "Unknown"),
-            npm1_mutated=ctx.get("npm1_mutated", False),
-            flt3_mutated=ctx.get("flt3_mutated", False),
-            genetic_other=ctx.get("genetic_other", False),
+            patient_age=0,
+            patient_sex="N/A",
+            npm1_mutated=False,
+            flt3_mutated=False,
+            genetic_other=False,
             image_filename=image_filename,
             gradcam_base64=result.gradcam_base64,
         )

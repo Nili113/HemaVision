@@ -232,6 +232,7 @@ def run_pipeline(config: HemaVisionConfig, eval_only: bool = False,
             "backbone": config.model.backbone,
             "num_tabular_features": num_features,
             "tabular_feature_names": feature_names,
+            "feature_type": "morphological",
         },
     }, model_path)
     logger.info(f"Final model saved to {model_path}")

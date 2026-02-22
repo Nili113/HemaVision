@@ -11,7 +11,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-3178C6?style=flat&logo=typescript&logoColor=white)](https://typescriptlang.org)
 [![License](https://img.shields.io/badge/License-Research_Only-yellow?style=flat)](#license)
 
-An AI system that combines microscopic cell imagery with patient clinical data to detect Acute Myeloid Leukemia. Provides explainable predictions with Grad-CAM visualizations for clinical transparency.
+An AI system that analyzes microscopic blood slide images using a **novel hybrid multimodal architecture**: deep learned features (ResNet50) fused with handcrafted morphological descriptors extracted from the same image. Upload a cell image, get an instant diagnosis with Grad-CAM explainability heatmaps showing what the model sees.
 
 </div>
 
@@ -38,33 +38,57 @@ An AI system that combines microscopic cell imagery with patient clinical data t
 
 ## Overview
 
-HemaVision is a multimodal deep learning platform for detecting AML blasts in peripheral blood smear microscopy images. It fuses visual features from cell images with tabular patient metadata (age, sex, genetic markers) through a dual-stream late fusion network, producing a binary classification with explainable Grad-CAM heatmaps.
+HemaVision is a deep learning platform for detecting AML blasts in peripheral blood smear microscopy images. It uses a **novel dual-stream hybrid architecture** that fuses:
 
-The system ships with three interface tiers: a Gradio demo for quick evaluation, a production React dashboard for clinical workflows, and a FastAPI REST backend for programmatic integration. Every prediction is persisted to a local SQLite database for history tracking and aggregate analytics.
+1. **Deep Visual Features** — ResNet50 backbone extracts 2048-dim learned representations from cell images
+2. **Handcrafted Morphological Features** — 20 domain-specific cytological descriptors (geometry, nucleus metrics, colour statistics, GLCM texture, shape) are computed from the same image and encoded by an MLP
+
+The two streams are concatenated and classified via a shared head. This hybrid design combines the representation power of deep learning with the interpretability and domain knowledge of traditional cytomorphology — the same features a pathologist evaluates manually.
+
+Trained on the Munich AML-Cytomorphology dataset (18,365 single-cell images from 200 patients). At inference time, only a blood slide image is required — morphological features are extracted automatically.
+
+The system ships with three interface tiers: a Gradio demo for quick evaluation, a production React dashboard for clinical workflows, and a FastAPI REST backend for programmatic integration.
 
 ---
 
 ## Architecture
 
 ```
-Visual Stream (ResNet50)          Tabular Stream (MLP)
-  Cell Image (224x224)             Age, Sex, Genetics
-         |                                |
-   Conv layers -> AdaptiveAvgPool   Linear(5,32) -> ReLU -> Dropout
-         |                                |
-    2048-dim features               32-dim features
-         |                                |
-         +------------ Fusion ------------+
-                         |
-                   2080-dim concat
-                         |
-                  Linear(2080, 256) -> ReLU -> Dropout(0.3)
-                  Linear(256, 1) -> Sigmoid
-                         |
-                    P(AML) in [0, 1]
+INPUT: Single Cell Microscopy Image (224x224x3)
+                    |
+        +-----------+-----------+
+        |                       |
+  Stream 1: Deep              Stream 2: Morphological
+  Visual Features             Feature Extraction
+  (ResNet50, frozen)          (Handcrafted, 20 features)
+        |                       |
+  Conv layers                 ┌─ Geometry (4)
+  -> AdaptiveAvgPool          │  cell area, perimeter,
+        |                     │  circularity, eccentricity
+  2048-dim features           ├─ Nucleus (3)
+        |                     │  nuclear area, N/C ratio,
+        |                     │  irregularity
+        |                     ├─ Colour (8)
+        |                     │  RGB/HSV means, stain stats
+        |                     ├─ Texture (4)
+        |                     │  GLCM contrast, homogeneity,
+        |                     │  energy, correlation
+        |                     └─ Shape (1)
+        |                        solidity
+        |                       |
+        |                 MLP: Linear(20→128→64→32)
+        |                       |
+        +------- Fusion --------+
+                    |
+              2080-dim concat
+                    |
+             Linear(2080, 256) -> ReLU -> Dropout
+             Linear(256, 1) -> Sigmoid
+                    |
+               P(AML) in [0, 1]
 ```
 
-**Dual-Stream Late Fusion Network** — the visual stream uses a pretrained ResNet50 backbone (frozen during initial training) to extract spatial features from cell images. The tabular stream encodes patient demographics and genetic markers through a lightweight MLP. Both streams are concatenated and passed through a shared classifier head.
+**Hybrid Dual-Stream Late Fusion Network** — this is the novel contribution. Unlike standard approaches that use only CNN features, HemaVision's second stream encodes domain-specific cytological features that mimic pathologist evaluation criteria. The morphological MLP learns to weight these handcrafted descriptors, while the visual stream captures patterns beyond human perception. Late fusion via concatenation lets each stream specialise independently.
 
 **Grad-CAM** is applied to the final convolutional block (`layer4`) to produce spatial attention heatmaps showing which regions of the cell image most influenced the prediction.
 
@@ -76,8 +100,9 @@ Visual Stream (ResNet50)          Tabular Stream (MLP)
 HemaVision/
 |
 |-- core/                              ML pipeline
+|   |-- morphology.py                  Morphological feature extractor (20 handcrafted features)
 |   |-- data_loader.py                 Patient-level data preprocessing and splitting
-|   |-- model.py                       DualStreamFusionModel (ResNet50 + MLP + Fusion)
+|   |-- model.py                       DualStreamFusionModel (ResNet50 + Morphological MLP + Fusion)
 |   |-- dataset.py                     PyTorch Dataset, augmentation pipelines, dataloaders
 |   |-- train.py                       Training loop, metrics tracking, early stopping
 |   +-- gradcam.py                     Grad-CAM generation and overlay visualization
@@ -272,7 +297,8 @@ Base URL: `http://localhost:8000`
 | Method | Path | Description |
 |--------|------|-------------|
 | `POST` | `/predict` | Single prediction from JSON body with base64-encoded image |
-| `POST` | `/predict/upload` | Single prediction from multipart form upload |
+| `POST` | `/predict/upload` | Single prediction from multipart form upload (clinical fields optional) |
+| `POST` | `/predict/image` | **Image-only prediction** — just upload a blood slide, no clinical data needed |
 | `POST` | `/batch_predict` | Batch prediction for multiple samples (Grad-CAM disabled for speed) |
 | `WS` | `/ws/predict` | WebSocket endpoint for real-time streaming predictions |
 | `GET` | `/model/info` | Model architecture, parameter count, device info |
@@ -291,24 +317,18 @@ Every call to `/predict` or `/predict/upload` automatically saves the result to 
 ### Example: Predict via cURL
 
 ```bash
-# Base64-encoded image
+# Image-only prediction (simplest — just upload a blood slide)
+curl -X POST http://localhost:8000/predict/image \
+  -F "file=@cell_image.png"
+
+# File upload with optional clinical data
+curl -X POST http://localhost:8000/predict/upload \
+  -F "file=@cell_image.png"
+
+# Base64-encoded image (JSON)
 curl -X POST http://localhost:8000/predict \
   -H "Content-Type: application/json" \
-  -d '{
-    "image_base64": "<base64 string>",
-    "age": 65,
-    "sex": "Male",
-    "npm1_mutated": true,
-    "flt3_mutated": false,
-    "genetic_other": false
-  }'
-
-# File upload
-curl -X POST http://localhost:8000/predict/upload \
-  -F "file=@cell_image.png" \
-  -F "age=65" \
-  -F "sex=Male" \
-  -F "npm1_mutated=true"
+  -d '{"image_base64": "<base64 string>"}'
 ```
 
 ---
@@ -361,14 +381,27 @@ Indexed on `created_at DESC` and `risk_level` for fast queries. Uses WAL journal
 
 ## Target Metrics
 
-| Metric | Target | Description |
-|--------|--------|-------------|
-| Accuracy | >= 90% | Overall correct predictions |
-| AUC-ROC | >= 0.95 | Area under the ROC curve |
-| Precision | >= 90% | Positive predictive value |
-| Recall | >= 90% | Sensitivity to AML blasts |
-| F1-Score | >= 90% | Harmonic mean of precision and recall |
-| Inference | < 50ms | Per-sample latency on GPU |
+| Metric | Target | Achieved | Description |
+|--------|--------|----------|-------------|
+| Accuracy | >= 90% | **95.81%** | Overall correct predictions |
+| AUC-ROC | >= 0.95 | **0.9868** | Area under the ROC curve |
+| Precision | >= 90% | **86.55%** | Positive predictive value |
+| Recall | >= 90% | **90.52%** | Sensitivity to AML blasts |
+| F1-Score | >= 90% | **88.49%** | Harmonic mean of precision and recall |
+| Inference | < 50ms | **~15ms** | Per-sample latency on GPU |
+
+### Test Set Confusion Matrix (3,673 samples)
+
+```
+                  Predicted
+                  Normal    AML Blast
+Actual Normal      2927        92
+Actual AML Blast     62       592
+```
+
+- **Specificity:** 96.95%
+- **Sensitivity:** 90.52%
+- **Trained:** 50 epochs on T4 GPU (~53 min), best model at epoch 47
 
 ---
 
@@ -378,11 +411,12 @@ Indexed on `created_at DESC` and `risk_level` for fast queries. Uses WAL journal
 
 | Property | Value |
 |----------|-------|
-| Total images | 18,000+ single-cell microscopy images |
-| Patients | 200+ |
-| Cell type classes | 21 (grouped into binary: blast vs. non-blast) |
+| Total images | 18,365 single-cell microscopy images |
+| Patients | 200 (100 AML + 100 controls) |
+| Cell type classes | 15 (grouped into binary: blast vs. non-blast) |
 | Image source | Peripheral blood smears |
-| Staining | May-Grunwald-Giemsa |
+| Staining | May-Grünwald-Giemsa |
+| Resolution | 400×400 px (TIFF) |
 | Source | The Cancer Imaging Archive (TCIA) / Kaggle |
 
 The data loader groups images by patient ID and performs a 70/10/20 train/validation/test split at the patient level.

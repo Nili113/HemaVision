@@ -31,6 +31,11 @@ from core.model import DualStreamFusionModel
 from core.gradcam import GradCAM
 from core.dataset import get_eval_transforms
 from core.train import AMLTrainer
+from core.morphology import (
+    extract_single_image_features,
+    MORPHOLOGY_FEATURE_NAMES,
+    NUM_MORPHOLOGY_FEATURES,
+)
 from utils.config import get_config, AugmentationConfig
 
 logger = logging.getLogger(__name__)
@@ -40,12 +45,11 @@ MODEL: Optional[DualStreamFusionModel] = None
 GRADCAM: Optional[GradCAM] = None
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TRANSFORM = get_eval_transforms()
-CONFIG = get_config()OPTIMAL_THRESHOLD: float = 0.5  # Updated when checkpoint is loaded
-# Feature configuration (must match training)
-TABULAR_FEATURE_NAMES = [
-    "age_normalized", "sex_encoded",
-    "npm1_mutated", "flt3_mutated", "genetic_other",
-]
+CONFIG = get_config()
+OPTIMAL_THRESHOLD: float = 0.5  # Updated when checkpoint is loaded
+
+# Feature configuration — morphological features extracted from images
+TABULAR_FEATURE_NAMES = list(MORPHOLOGY_FEATURE_NAMES)  # 20 features
 
 
 def load_model(checkpoint_path: Optional[str] = None) -> DualStreamFusionModel:
@@ -56,11 +60,26 @@ def load_model(checkpoint_path: Optional[str] = None) -> DualStreamFusionModel:
         # Peek at checkpoint for optimal threshold
         ckpt = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
         OPTIMAL_THRESHOLD = ckpt.get("optimal_threshold", 0.5)
-        logger.info(f"Using optimal threshold from checkpoint: {OPTIMAL_THRESHOLD:.4f}")
+
+        # If best_model.pt has default threshold, try final_model.pt for the optimized one
+        if OPTIMAL_THRESHOLD == 0.5:
+            final_ckpt_path = Path(checkpoint_path).parent / "final_model.pt"
+            if final_ckpt_path.exists():
+                final_ckpt = torch.load(str(final_ckpt_path), map_location=DEVICE, weights_only=False)
+                opt_thresh = final_ckpt.get("optimal_threshold", 0.5)
+                if opt_thresh != 0.5:
+                    OPTIMAL_THRESHOLD = opt_thresh
+                    logger.info(f"Loaded optimized threshold from final_model.pt: {OPTIMAL_THRESHOLD:.4f}")
+
+        logger.info(f"Using optimal threshold: {OPTIMAL_THRESHOLD:.4f}")
+
+        # Get num_tabular_features from checkpoint config
+        saved_config = ckpt.get("config", {})
+        num_tab = saved_config.get("num_tabular_features", len(TABULAR_FEATURE_NAMES))
 
         model = AMLTrainer.load_checkpoint(
             checkpoint_path,
-            num_tabular_features=len(TABULAR_FEATURE_NAMES),
+            num_tabular_features=num_tab,
             device=DEVICE,
         )
     else:
@@ -79,14 +98,13 @@ def load_model(checkpoint_path: Optional[str] = None) -> DualStreamFusionModel:
 
 def predict(
     image: Image.Image,
-    age: int,
-    sex: str,
-    npm1: bool,
-    flt3: bool,
-    genetic_other: bool,
 ) -> Tuple[str, Optional[Image.Image]]:
     """
     Run AML prediction on a single cell image.
+
+    Morphological features are automatically extracted from the
+    uploaded image and fed into the tabular stream alongside the
+    deep visual features from ResNet50.
 
     Returns:
         (result_text, gradcam_image)
@@ -103,16 +121,17 @@ def predict(
     image_pil = image.convert("RGB") if isinstance(image, Image.Image) else Image.fromarray(image).convert("RGB")
     image_tensor = TRANSFORM(image_pil).unsqueeze(0).to(DEVICE)
 
-    # ── Prepare tabular features ─────────────────────────────
-    # Normalize age (approximate: center around 55, std ~15)
-    age_norm = (age - 55.0) / 15.0
-    sex_enc = 1.0 if sex == "Male" else 0.0
+    # ── Extract morphological features from the image ───────
+    morph_vec = extract_single_image_features(image_pil, normalize=True)
+    tabular = torch.tensor(morph_vec, dtype=torch.float32).unsqueeze(0).to(DEVICE)
 
-    tabular = torch.tensor(
-        [[age_norm, sex_enc,
-          float(npm1), float(flt3), float(genetic_other)]],
-        dtype=torch.float32,
-    ).to(DEVICE)
+    # Pad or truncate to match model's expected feature count
+    expected = MODEL.num_tabular_features
+    if tabular.shape[1] < expected:
+        pad = torch.zeros(1, expected - tabular.shape[1], device=DEVICE)
+        tabular = torch.cat([tabular, pad], dim=1)
+    elif tabular.shape[1] > expected:
+        tabular = tabular[:, :expected]
 
     # ── Run prediction ───────────────────────────────────────
     MODEL.eval()
@@ -146,14 +165,6 @@ def predict(
         f"  Confidence:   {confidence:.1%}\n"
         f"  Probability:  {prob:.4f}\n"
         f"  Risk Level:   {risk_color} {risk_level}\n\n"
-        f"{'━' * 40}\n"
-        f"  📋 PATIENT CONTEXT\n"
-        f"{'━' * 40}\n\n"
-        f"  Age:          {age} years\n"
-        f"  Sex:          {sex}\n"
-        f"  NPM1:         {'Positive' if npm1 else 'Negative'}\n"
-        f"  FLT3:         {'Positive' if flt3 else 'Negative'}\n"
-        f"  Other:        {'Positive' if genetic_other else 'Negative'}\n\n"
         f"{'━' * 40}\n"
         f"  ⚠️  DISCLAIMER\n"
         f"{'━' * 40}\n\n"
@@ -306,40 +317,22 @@ def create_gradio_app() -> gr.Blocks:
                     </h1>
                 </div>
                 <p style="color: #8E8E93; font-size: 1.05rem; margin: 0;">
-                    AI-powered Acute Myeloid Leukemia detection combining cell microscopy with clinical data
+                    Multimodal AML detection — fusing deep visual features with handcrafted morphological analysis
                 </p>
             </div>
         """)
 
         with gr.Row(equal_height=True):
-            # ── Left Column: Inputs ──────────────────────────
+            # ── Left Column: Input ───────────────────────────
             with gr.Column(scale=1):
-                gr.HTML("<h3 style='color: #1C1C1E; margin-bottom: 4px;'>📸 Cell Image</h3>")
+                gr.HTML("<h3 style='color: #1C1C1E; margin-bottom: 4px;'>📸 Cell Microscopy Image</h3>")
+                gr.HTML("<p style='color: #8E8E93; font-size: 0.9rem; margin-bottom: 12px;'>Upload a blood smear image — morphological features are extracted automatically</p>")
                 image_input = gr.Image(
                     type="pil",
                     label="Upload microscopic cell image",
                     elem_classes="upload-zone",
-                    height=260,
+                    height=320,
                 )
-
-                gr.HTML("<h3 style='color: #1C1C1E; margin-top: 16px; margin-bottom: 4px;'>👤 Patient Information</h3>")
-                with gr.Group(elem_classes="input-section"):
-                    age_input = gr.Slider(
-                        minimum=18, maximum=100, value=60, step=1,
-                        label="Age (years)"
-                    )
-                    sex_input = gr.Radio(
-                        choices=["Male", "Female"],
-                        value="Male",
-                        label="Sex",
-                        elem_classes="radio-clean",
-                    )
-
-                gr.HTML("<h3 style='color: #1C1C1E; margin-top: 16px; margin-bottom: 4px;'>🧬 Genetic Markers</h3>")
-                with gr.Group(elem_classes="input-section"):
-                    npm1_input = gr.Checkbox(label="NPM1 Mutation", value=False)
-                    flt3_input = gr.Checkbox(label="FLT3 Mutation", value=False)
-                    genetic_other_input = gr.Checkbox(label="Other Mutations", value=False)
 
                 analyze_btn = gr.Button(
                     "🔍 Analyze Cell",
@@ -353,7 +346,7 @@ def create_gradio_app() -> gr.Blocks:
                 gr.HTML("<h3 style='color: #1C1C1E; margin-bottom: 4px;'>🎯 Diagnostic Result</h3>")
                 result_output = gr.Textbox(
                     label="Analysis",
-                    lines=20,
+                    lines=16,
                     interactive=False,
                     elem_classes="result-box",
                     show_copy_button=True,
@@ -374,7 +367,7 @@ def create_gradio_app() -> gr.Blocks:
                 Always consult qualified hematologists for patient care decisions.
                 <br><br>
                 <span style="color: #C7C7CC;">
-                    Powered by PyTorch • ResNet50 + MLP Late Fusion • Grad-CAM Explainability
+                    Powered by PyTorch • ResNet50 + Morphological MLP Late Fusion • Grad-CAM Explainability
                 </span>
             </div>
         """)
@@ -382,8 +375,7 @@ def create_gradio_app() -> gr.Blocks:
         # ── Event Handlers ───────────────────────────────────
         analyze_btn.click(
             fn=predict,
-            inputs=[image_input, age_input, sex_input,
-                    npm1_input, flt3_input, genetic_other_input],
+            inputs=[image_input],
             outputs=[result_output, gradcam_output],
         )
 

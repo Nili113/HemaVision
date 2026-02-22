@@ -3,52 +3,36 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { RotateCcw, Loader2 } from 'lucide-react';
 import clsx from 'clsx';
 import UploadZone from '../components/UploadZone';
-import PatientForm from '../components/PatientForm';
 import ResultCard from '../components/ResultCard';
 import GradCAMViewer from '../components/GradCAMViewer';
 import { useAnalysis } from '../hooks/useAnalysis';
 
-interface PatientData {
-  age: number;
-  sex: string;
-  npm1_mutated: boolean;
-  flt3_mutated: boolean;
-  genetic_other: boolean;
-}
-
-const stepLabels = ['Data Entry', 'Processing', 'Results'];
+const stepLabels = ['Upload Image', 'Processing', 'Results'];
 
 export default function Analyze() {
   const [step, setStep] = useState(1);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
-  const [, setPatientData] = useState<PatientData | null>(null);
   const { result, isLoading, error, analyze, reset } = useAnalysis();
 
-  const handleImageUpload = useCallback((file: File) => {
-    setImageFile(file);
-    const reader = new FileReader();
-    reader.onload = (e) => setImagePreview(e.target?.result as string);
-    reader.readAsDataURL(file);
-    setStep(2);
-  }, []);
-
-  const handlePatientSubmit = useCallback(
-    async (data: PatientData) => {
-      setPatientData(data);
+  const handleImageUpload = useCallback(
+    async (file: File) => {
+      setImageFile(file);
+      const reader = new FileReader();
+      reader.onload = (e) => setImagePreview(e.target?.result as string);
+      reader.readAsDataURL(file);
+      // Go straight to results — no patient form needed
+      setStep(2);
+      await analyze(file);
       setStep(3);
-      if (imageFile) {
-        await analyze(imageFile, data);
-      }
     },
-    [imageFile, analyze]
+    [analyze]
   );
 
   const handleReset = useCallback(() => {
     setStep(1);
     setImageFile(null);
     setImagePreview(null);
-    setPatientData(null);
     reset();
   }, [reset]);
 
@@ -66,7 +50,7 @@ export default function Analyze() {
                 </div>
                 <div>
                   <h1 className="text-xl font-bold text-white leading-tight">New Diagnostic Session</h1>
-                  <p className="text-slate-500 text-xs mt-0.5">Acute Myeloid Leukemia (AML) Screening</p>
+                  <p className="text-slate-500 text-xs mt-0.5">Upload a blood slide for AML screening</p>
                 </div>
               </div>
             </div>
@@ -132,7 +116,7 @@ export default function Analyze() {
 
         {/* ── Content ────────────────────────────────── */}
         <AnimatePresence mode="wait">
-          {/* Step 1: Upload + Patient Form side by side */}
+          {/* Step 1: Upload image */}
           {step === 1 && (
             <motion.div
               key="upload"
@@ -145,18 +129,19 @@ export default function Analyze() {
             </motion.div>
           )}
 
-          {/* Step 2: Patient Info */}
-          {step === 2 && (
+          {/* Step 2: Processing / Step 3: Results */}
+          {step >= 2 && (
             <motion.div
-              key="patient"
+              key="results"
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -12 }}
               transition={{ duration: 0.3 }}
+              className="space-y-6"
             >
               {/* Image thumbnail */}
               {imagePreview && (
-                <div className="mb-6 flex items-center gap-4 p-4 rounded-xl bg-surface border border-slate-800">
+                <div className="flex items-center gap-4 p-4 rounded-xl bg-surface border border-slate-800">
                   <img
                     src={imagePreview}
                     alt="Uploaded cell"
@@ -167,42 +152,19 @@ export default function Analyze() {
                       {imageFile?.name}
                     </div>
                     <div className="text-xs text-slate-500">
-                      {imageFile && (imageFile.size / 1024).toFixed(1)} KB — Ready for analysis
+                      {imageFile && (imageFile.size / 1024).toFixed(1)} KB
                     </div>
                   </div>
-                  <button
-                    onClick={() => setStep(1)}
-                    className="text-sm text-primary hover:text-primary-hover font-medium"
-                  >
-                    Change
-                  </button>
                 </div>
               )}
 
-              <PatientForm
-                onSubmit={handlePatientSubmit}
-                onBack={() => setStep(1)}
-              />
-            </motion.div>
-          )}
-
-          {/* Step 3: Results */}
-          {step === 3 && (
-            <motion.div
-              key="results"
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -12 }}
-              transition={{ duration: 0.3 }}
-              className="space-y-6"
-            >
               {/* Loading */}
               {isLoading && (
                 <div className="text-center py-24">
                   <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-primary/10 mb-5">
                     <Loader2 className="w-6 h-6 text-primary animate-spin" />
                   </div>
-                  <h3 className="text-lg font-semibold text-white mb-1.5">Analyzing...</h3>
+                  <h3 className="text-lg font-semibold text-white mb-1.5">Analyzing blood slide...</h3>
                   <p className="text-sm text-slate-400">
                     Running dual-stream fusion with Grad-CAM
                   </p>

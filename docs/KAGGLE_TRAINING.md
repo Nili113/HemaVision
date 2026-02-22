@@ -2,6 +2,8 @@
 
 Complete Kaggle notebook code. Copy-paste each cell into a Kaggle notebook. Enable **GPU T4 x2** or **P100** accelerator and turn **Internet ON**.
 
+> **Note:** This version uses the **hybrid multimodal architecture** — the model fuses deep CNN features (ResNet50) with 20 handcrafted morphological features (geometry, nucleus, colour, texture, shape) extracted from each cell image. Feature extraction adds ~15 minutes to preprocessing but creates a genuinely multimodal model.
+
 ---
 
 ## Cell 1: Clone the Repo & Install Dependencies
@@ -14,6 +16,7 @@ Complete Kaggle notebook code. Copy-paste each cell into a Kaggle notebook. Enab
 # Install backend/training dependencies
 !pip install -q torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 !pip install -q timm albumentations opencv-python-headless pillow matplotlib scikit-learn pandas tqdm seaborn
+!pip install -q scikit-image  # Required for morphological feature extraction (GLCM, regionprops)
 !pip install -q onnx onnxruntime  # Required for ONNX model export
 
 # Check if requirements.txt exists and install from it

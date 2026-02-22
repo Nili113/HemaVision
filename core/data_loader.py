@@ -110,6 +110,7 @@ class AMLDataPreprocessor:
         self.test_df: Optional[pd.DataFrame] = None
         self.tabular_feature_names: List[str] = []
         self.num_tabular_features: int = 0
+        self.has_real_metadata: bool = False  # True only when patient_data.csv exists
 
     def create_unified_dataframe(self) -> pd.DataFrame:
         """
@@ -161,12 +162,15 @@ class AMLDataPreprocessor:
 
             # Fill missing patient data with defaults
             self._fill_missing_metadata()
+            self.has_real_metadata = True
         else:
-            logger.warning(
-                f"Patient CSV not found at {patient_csv}. "
-                f"Using synthetic clinical data for demonstration."
+            logger.info(
+                f"No patient CSV at {patient_csv}. "
+                f"Using ZERO tabular features — model will train on images only. "
+                f"(The tabular stream is preserved for real clinical data at inference.)"
             )
-            self.unified_df = self._generate_synthetic_metadata(images_df)
+            self.has_real_metadata = False
+            self.unified_df = self._create_image_only_dataframe(images_df)
 
         # Ensure binary label exists
         if "label" not in self.unified_df.columns:
@@ -305,53 +309,24 @@ class AMLDataPreprocessor:
 
         self.unified_df = df
 
-    def _generate_synthetic_metadata(self, images_df: pd.DataFrame) -> pd.DataFrame:
+    def _create_image_only_dataframe(self, images_df: pd.DataFrame) -> pd.DataFrame:
         """
-        Generate synthetic clinical metadata for demonstration purposes.
-        Used when no patient_data.csv is available.
+        Create a DataFrame with zero-valued clinical features.
 
-        IMPORTANT: When "patients" are really cell-type folders (few unique
-        IDs), we randomize per IMAGE to prevent the tabular MLP from
-        memorizing a unique feature pattern per cell type (= per label).
+        Used when no patient_data.csv exists. All tabular features are set
+        to zero so the model learns to rely 100% on cell images. The
+        dual-stream architecture is preserved — on the website, if a user
+        provides real clinical data it will contribute to the prediction.
         """
-        rng = np.random.RandomState(self.config.training.random_seed)
-        unique_patients = images_df["patient_id"].unique()
-        num_patients = len(unique_patients)
-        num_images = len(images_df)
+        df = images_df.copy()
 
-        # If pseudo-patients (cell-type folders), randomize per image
-        # to prevent tabular features from leaking the label.
-        per_image = num_patients < 20
-        n = num_images if per_image else num_patients
-
-        if per_image:
-            logger.warning(
-                f"Only {num_patients} pseudo-patients detected (cell-type folders). "
-                f"Generating synthetic metadata per IMAGE to prevent label leakage."
-            )
-
-        meta = pd.DataFrame({
-            "age": rng.normal(55, 15, n).clip(18, 95).astype(int),
-            "sex": rng.choice(["Male", "Female"], n),
-            "npm1_mutated": rng.choice([0, 1], n, p=[0.65, 0.35]),
-            "flt3_mutated": rng.choice([0, 1], n, p=[0.7, 0.3]),
-            "genetic_other": rng.choice([0, 1], n, p=[0.8, 0.2]),
-            "genetic_subtype": rng.choice(
-                ["NPM1", "FLT3-ITD", "CEBPA", "t(8;21)", "inv(16)", "None"],
-                n,
-                p=[0.15, 0.15, 0.10, 0.10, 0.10, 0.40]
-            ),
-        })
-
-        if per_image:
-            # Attach directly to images (same row order)
-            df = images_df.reset_index(drop=True)
-            for col in meta.columns:
-                df[col] = meta[col].values
-        else:
-            # Per-patient: merge as before
-            meta["patient_id"] = unique_patients
-            df = images_df.merge(meta, on="patient_id", how="left")
+        # Fixed zero-valued clinical features
+        df["age"] = 0
+        df["sex"] = "Unknown"
+        df["npm1_mutated"] = 0
+        df["flt3_mutated"] = 0
+        df["genetic_other"] = 0
+        df["genetic_subtype"] = "None"
 
         # Generate labels from cell types
         df["label"] = df["cell_type"].map(self.AML_CLASSES).fillna(0).astype(int)

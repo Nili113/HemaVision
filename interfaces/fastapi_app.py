@@ -60,6 +60,11 @@ TABULAR_FEATURE_NAMES = [
     "npm1_mutated", "flt3_mutated", "genetic_other",
 ]
 
+# Actual number of features the model expects (may be larger due to
+# one-hot encoded genetic_subtype columns created during training).
+# Updated when the checkpoint is loaded.
+NUM_MODEL_TABULAR_FEATURES: int = len(TABULAR_FEATURE_NAMES)
+
 # ── Global model state ───────────────────────────────────────
 MODEL: Optional[DualStreamFusionModel] = None
 GRADCAM_ENGINE: Optional[GradCAM] = None
@@ -210,18 +215,26 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> Optio
 
 def load_model(checkpoint_path: Optional[str] = None):
     """Load the trained model."""
-    global MODEL, GRADCAM_ENGINE
+    global MODEL, GRADCAM_ENGINE, NUM_MODEL_TABULAR_FEATURES
 
     if checkpoint_path and Path(checkpoint_path).exists():
+        # Peek at checkpoint to get num_tabular_features
+        ckpt = torch.load(checkpoint_path, map_location=DEVICE, weights_only=False)
+        saved_config = ckpt.get("config", {})
+        NUM_MODEL_TABULAR_FEATURES = saved_config.get(
+            "num_tabular_features", len(TABULAR_FEATURE_NAMES)
+        )
+        logger.info(f"Checkpoint expects {NUM_MODEL_TABULAR_FEATURES} tabular features")
+
         MODEL = AMLTrainer.load_checkpoint(
             checkpoint_path,
-            num_tabular_features=len(TABULAR_FEATURE_NAMES),
+            num_tabular_features=NUM_MODEL_TABULAR_FEATURES,
             device=DEVICE,
         )
     else:
         logger.info("No checkpoint found. Running in demo mode.")
         MODEL = DualStreamFusionModel(
-            num_tabular_features=len(TABULAR_FEATURE_NAMES),
+            num_tabular_features=NUM_MODEL_TABULAR_FEATURES,
         )
         MODEL = MODEL.to(DEVICE)
         MODEL.eval()
@@ -253,11 +266,16 @@ def run_prediction(
     image_pil = image.convert("RGB")
     image_tensor = TRANSFORM(image_pil).unsqueeze(0).to(DEVICE)
 
-    # Prepare tabular
+    # Prepare tabular — 5 raw features, zero-padded to match model width
     age_norm = (age - 55.0) / 15.0
     sex_enc = 1.0 if sex == "Male" else 0.0
+    raw_features = [age_norm, sex_enc, float(npm1), float(flt3), float(genetic_other)]
+    # Pad with zeros for one-hot genetic_subtype columns the model expects
+    pad_len = NUM_MODEL_TABULAR_FEATURES - len(raw_features)
+    if pad_len > 0:
+        raw_features.extend([0.0] * pad_len)
     tabular = torch.tensor(
-        [[age_norm, sex_enc, float(npm1), float(flt3), float(genetic_other)]],
+        [raw_features[:NUM_MODEL_TABULAR_FEATURES]],
         dtype=torch.float32,
     ).to(DEVICE)
 

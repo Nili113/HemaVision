@@ -191,7 +191,7 @@ def run_pipeline(config: HemaVisionConfig, eval_only: bool = False,
     logger.info("Phase 6: Generating Grad-CAM visualizations...")
 
     try:
-        gradcam = GradCAM(model, target_layer=config.inference.gradcam_target_layer)
+        gradcam = GradCAM(model, target_layers=config.inference.gradcam_target_layers)
         gradcam.batch_visualize(
             dataloader=test_loader,
             num_samples=config.inference.gradcam_num_samples,
@@ -209,7 +209,7 @@ def run_pipeline(config: HemaVisionConfig, eval_only: bool = False,
     # ──────────────────────────────────────────────────────────
     logger.info("Phase 7: Exporting model and generating summary...")
 
-    # Save final model
+    # Save final model (.pt)
     model_path = config.paths.checkpoints_dir / "final_model.pt"
     torch.save({
         "model_state_dict": model.state_dict(),
@@ -220,6 +220,29 @@ def run_pipeline(config: HemaVisionConfig, eval_only: bool = False,
         },
     }, model_path)
     logger.info(f"Final model saved to {model_path}")
+
+    # Export ONNX model
+    onnx_path = config.paths.checkpoints_dir / "final_model.onnx"
+    try:
+        model.eval()
+        dummy_image = torch.randn(1, 3, 224, 224).to(device)
+        dummy_tabular = torch.randn(1, num_features).to(device)
+        torch.onnx.export(
+            model,
+            (dummy_image, dummy_tabular),
+            str(onnx_path),
+            input_names=["image", "tabular"],
+            output_names=["logits"],
+            dynamic_axes={
+                "image": {0: "batch_size"},
+                "tabular": {0: "batch_size"},
+                "logits": {0: "batch_size"},
+            },
+            opset_version=17,
+        )
+        logger.info(f"ONNX model exported to {onnx_path}")
+    except Exception as e:
+        logger.warning(f"ONNX export failed: {e}")
 
     # Generate results summary
     elapsed = time.time() - start_time
@@ -260,6 +283,7 @@ def run_pipeline(config: HemaVisionConfig, eval_only: bool = False,
         f"  Test AUC:   {test_results.get('auc_roc', 'N/A')}\n"
         f"  Test F1:    {test_results.get('f1', 'N/A')}\n"
         f"  Model:      {model_path}\n"
+        f"  ONNX:       {onnx_path}\n"
         f"  Results:    {summary_path}\n"
         f"  Grad-CAMs:  {config.paths.gradcam_dir}\n"
         f"{'═' * 60}\n"

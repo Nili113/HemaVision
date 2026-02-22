@@ -239,7 +239,7 @@ def load_model(checkpoint_path: Optional[str] = None):
         MODEL = MODEL.to(DEVICE)
         MODEL.eval()
 
-    GRADCAM_ENGINE = GradCAM(MODEL, target_layer="layer4")
+    GRADCAM_ENGINE = GradCAM(MODEL, target_layers=["layer3", "layer4"])
     logger.info(f"Model loaded on {DEVICE}")
 
 

@@ -69,7 +69,7 @@ def load_model(checkpoint_path: Optional[str] = None) -> DualStreamFusionModel:
         model.eval()
 
     MODEL = model
-    GRADCAM = GradCAM(model, target_layer="layer4")
+    GRADCAM = GradCAM(model, target_layers=["layer3", "layer4"])
     return model
 
 

@@ -155,7 +155,7 @@ class AugmentationConfig:
 class InferenceConfig:
     """Inference and deployment configuration."""
     device: str = "auto"  # "auto", "cuda", "cpu"
-    gradcam_target_layer: str = "layer4"
+    gradcam_target_layers: Tuple[str, ...] = ("layer3", "layer4")
     gradcam_num_samples: int = 20
     api_host: str = "0.0.0.0"
     api_port: int = 8000

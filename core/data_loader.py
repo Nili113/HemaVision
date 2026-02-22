@@ -404,21 +404,16 @@ class AMLDataPreprocessor:
         self,
     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
-        Split data at the PATIENT level to prevent data leakage.
+        Split data to prevent data leakage, with adaptive strategy.
 
-        Critical: All images from a single patient must reside in the
-        same split. Splitting by image would leak patient-specific
-        features across train/val/test boundaries.
-
-        Strategy:
-        ┌─────────────────────────────────────────────┐
-        │           All Patients (100%)               │
-        │  ┌─────────┬────────┬──────────┐           │
-        │  │ Train   │  Val   │  Test    │           │
-        │  │  70%    │  10%   │  20%     │           │
-        │  │ patients│patients│ patients │           │
-        │  └─────────┴────────┴──────────┘           │
-        └─────────────────────────────────────────────┘
+        Strategy Selection:
+        ┌──────────────────────────────────────────────────────────┐
+        │  If real patient IDs available (≥20 patients):           │
+        │    → Patient-level split (prevents data leakage)         │
+        │  If pseudo-patients (e.g. cell-type folders only):       │
+        │    → Stratified image-level split (ensures class          │
+        │      balance in every split)                             │
+        └──────────────────────────────────────────────────────────┘
 
         Returns:
             Tuple of (train_df, val_df, test_df)
@@ -431,38 +426,19 @@ class AMLDataPreprocessor:
         val_r = self.config.training.val_ratio
         test_r = self.config.training.test_ratio
 
-        # Get unique patients
         patients = self.unified_df["patient_id"].unique()
-        logger.info(f"Splitting {len(patients)} patients into "
-                     f"train({train_r})/val({val_r})/test({test_r})")
+        num_patients = len(patients)
 
-        # First split: separate test set
-        train_val_patients, test_patients = train_test_split(
-            patients,
-            test_size=test_r,
-            random_state=seed,
-        )
+        # Decide splitting strategy:
+        # If patients are really just cell-type folders (few "patients")
+        # or a split would leave a class with 0 samples, use stratified
+        # image-level splitting instead.
+        use_patient_split = self._can_use_patient_split(patients, test_r, val_r, seed)
 
-        # Second split: separate validation from training
-        val_relative_size = val_r / (train_r + val_r)
-        train_patients, val_patients = train_test_split(
-            train_val_patients,
-            test_size=val_relative_size,
-            random_state=seed,
-        )
-
-        # Map patients back to rows
-        self.train_df = self.unified_df[
-            self.unified_df["patient_id"].isin(train_patients)
-        ].reset_index(drop=True)
-
-        self.val_df = self.unified_df[
-            self.unified_df["patient_id"].isin(val_patients)
-        ].reset_index(drop=True)
-
-        self.test_df = self.unified_df[
-            self.unified_df["patient_id"].isin(test_patients)
-        ].reset_index(drop=True)
+        if use_patient_split:
+            self._split_by_patient(patients, train_r, val_r, test_r, seed)
+        else:
+            self._split_by_image_stratified(train_r, val_r, test_r, seed)
 
         # Compute class weights from training set for weighted loss
         train_labels = self.train_df["label"]
@@ -472,14 +448,107 @@ class AMLDataPreprocessor:
 
         logger.info(
             f"Split complete:\n"
-            f"  Train: {len(train_patients)} patients, "
-            f"{len(self.train_df)} images\n"
-            f"  Val:   {len(val_patients)} patients, "
-            f"{len(self.val_df)} images\n"
-            f"  Test:  {len(test_patients)} patients, "
-            f"{len(self.test_df)} images\n"
+            f"  Train: {self.train_df['patient_id'].nunique()} patients, "
+            f"{len(self.train_df)} images "
+            f"(pos_rate={self.train_df['label'].mean():.3f})\n"
+            f"  Val:   {self.val_df['patient_id'].nunique()} patients, "
+            f"{len(self.val_df)} images "
+            f"(pos_rate={self.val_df['label'].mean():.3f})\n"
+            f"  Test:  {self.test_df['patient_id'].nunique()} patients, "
+            f"{len(self.test_df)} images "
+            f"(pos_rate={self.test_df['label'].mean():.3f})\n"
             f"  Positive weight (class imbalance): {self.pos_weight:.2f}"
         )
+
+        return self.train_df, self.val_df, self.test_df
+
+    def _can_use_patient_split(
+        self, patients: np.ndarray, test_r: float, val_r: float, seed: int
+    ) -> bool:
+        """Check whether patient-level splitting keeps both classes in every split."""
+        if len(patients) < 20:
+            logger.warning(
+                f"Only {len(patients)} unique patient IDs found — too few for "
+                f"reliable patient-level splitting. Using stratified image-level split."
+            )
+            return False
+
+        # Simulate the split and verify class coverage
+        try:
+            tv, test_p = train_test_split(patients, test_size=test_r, random_state=seed)
+            val_rel = val_r / (1 - test_r)
+            train_p, val_p = train_test_split(tv, test_size=val_rel, random_state=seed)
+
+            for name, pset in [("val", val_p), ("test", test_p)]:
+                subset = self.unified_df[self.unified_df["patient_id"].isin(pset)]
+                if subset["label"].nunique() < 2:
+                    logger.warning(
+                        f"Patient-level split would give {name} set only "
+                        f"class(es) {subset['label'].unique().tolist()}. "
+                        f"Falling back to stratified image-level split."
+                    )
+                    return False
+        except ValueError:
+            return False
+
+        return True
+
+    def _split_by_patient(
+        self, patients, train_r, val_r, test_r, seed
+    ):
+        """Patient-level splitting (no data leakage)."""
+        logger.info(f"Splitting {len(patients)} patients into "
+                     f"train({train_r})/val({val_r})/test({test_r}) "
+                     f"[patient-level]")
+
+        train_val_patients, test_patients = train_test_split(
+            patients, test_size=test_r, random_state=seed,
+        )
+        val_relative_size = val_r / (train_r + val_r)
+        train_patients, val_patients = train_test_split(
+            train_val_patients, test_size=val_relative_size, random_state=seed,
+        )
+
+        self.train_df = self.unified_df[
+            self.unified_df["patient_id"].isin(train_patients)
+        ].reset_index(drop=True)
+        self.val_df = self.unified_df[
+            self.unified_df["patient_id"].isin(val_patients)
+        ].reset_index(drop=True)
+        self.test_df = self.unified_df[
+            self.unified_df["patient_id"].isin(test_patients)
+        ].reset_index(drop=True)
+
+    def _split_by_image_stratified(self, train_r, val_r, test_r, seed):
+        """Stratified image-level splitting ensuring both classes in every split."""
+        logger.info(
+            f"Using STRATIFIED IMAGE-LEVEL split "
+            f"train({train_r})/val({val_r})/test({test_r}) "
+            f"to ensure class balance in all splits."
+        )
+
+        labels = self.unified_df["label"]
+
+        # First split: separate test set
+        train_val_idx, test_idx = train_test_split(
+            self.unified_df.index,
+            test_size=test_r,
+            random_state=seed,
+            stratify=labels,
+        )
+
+        # Second split: separate validation from training
+        val_relative_size = val_r / (train_r + val_r)
+        train_idx, val_idx = train_test_split(
+            train_val_idx,
+            test_size=val_relative_size,
+            random_state=seed,
+            stratify=labels.loc[train_val_idx],
+        )
+
+        self.train_df = self.unified_df.loc[train_idx].reset_index(drop=True)
+        self.val_df = self.unified_df.loc[val_idx].reset_index(drop=True)
+        self.test_df = self.unified_df.loc[test_idx].reset_index(drop=True)
 
         return self.train_df, self.val_df, self.test_df
 

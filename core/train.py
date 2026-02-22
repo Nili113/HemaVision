@@ -179,7 +179,6 @@ class AMLTrainer:
             patience=self.config.training.scheduler_patience,
             factor=self.config.training.scheduler_factor,
             min_lr=self.config.training.scheduler_min_lr,
-            verbose=True,
         )
 
         # Early stopping

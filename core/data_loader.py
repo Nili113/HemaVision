@@ -309,28 +309,49 @@ class AMLDataPreprocessor:
         """
         Generate synthetic clinical metadata for demonstration purposes.
         Used when no patient_data.csv is available.
+
+        IMPORTANT: When "patients" are really cell-type folders (few unique
+        IDs), we randomize per IMAGE to prevent the tabular MLP from
+        memorizing a unique feature pattern per cell type (= per label).
         """
         rng = np.random.RandomState(self.config.training.random_seed)
         unique_patients = images_df["patient_id"].unique()
         num_patients = len(unique_patients)
+        num_images = len(images_df)
 
-        # Generate per-patient synthetic data
-        patient_meta = pd.DataFrame({
-            "patient_id": unique_patients,
-            "age": rng.normal(55, 15, num_patients).clip(18, 95).astype(int),
-            "sex": rng.choice(["Male", "Female"], num_patients),
-            "npm1_mutated": rng.choice([0, 1], num_patients, p=[0.65, 0.35]),
-            "flt3_mutated": rng.choice([0, 1], num_patients, p=[0.7, 0.3]),
-            "genetic_other": rng.choice([0, 1], num_patients, p=[0.8, 0.2]),
+        # If pseudo-patients (cell-type folders), randomize per image
+        # to prevent tabular features from leaking the label.
+        per_image = num_patients < 20
+        n = num_images if per_image else num_patients
+
+        if per_image:
+            logger.warning(
+                f"Only {num_patients} pseudo-patients detected (cell-type folders). "
+                f"Generating synthetic metadata per IMAGE to prevent label leakage."
+            )
+
+        meta = pd.DataFrame({
+            "age": rng.normal(55, 15, n).clip(18, 95).astype(int),
+            "sex": rng.choice(["Male", "Female"], n),
+            "npm1_mutated": rng.choice([0, 1], n, p=[0.65, 0.35]),
+            "flt3_mutated": rng.choice([0, 1], n, p=[0.7, 0.3]),
+            "genetic_other": rng.choice([0, 1], n, p=[0.8, 0.2]),
             "genetic_subtype": rng.choice(
                 ["NPM1", "FLT3-ITD", "CEBPA", "t(8;21)", "inv(16)", "None"],
-                num_patients,
+                n,
                 p=[0.15, 0.15, 0.10, 0.10, 0.10, 0.40]
             ),
         })
 
-        # Merge with images
-        df = images_df.merge(patient_meta, on="patient_id", how="left")
+        if per_image:
+            # Attach directly to images (same row order)
+            df = images_df.reset_index(drop=True)
+            for col in meta.columns:
+                df[col] = meta[col].values
+        else:
+            # Per-patient: merge as before
+            meta["patient_id"] = unique_patients
+            df = images_df.merge(meta, on="patient_id", how="left")
 
         # Generate labels from cell types
         df["label"] = df["cell_type"].map(self.AML_CLASSES).fillna(0).astype(int)

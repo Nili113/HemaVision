@@ -470,363 +470,341 @@ print("=" * 60)
 
 ---
 
-## Cell 9: Custom Training Code (Fallback)
+## Cell 9: Plot Training Curves
 
 ```python
-# Cell 9: Fallback training loop
-# ONLY USE THIS if Cell 8 (main.py) fails for some reason.
-# This is a standalone PyTorch training loop that works directly
-# with the AML-Cytomorphology_LMU dataset's folder structure.
+# Cell 9: Load training history from disk and plot curves
+# main.py saves all metrics to outputs/results/training_history.json
+# so we load from there instead of relying on in-memory variables.
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms, models
-import timm
+import json
 import os
-import time
-from tqdm import tqdm
 import matplotlib.pyplot as plt
-
-# ======================== CONFIGURATION ========================
-# Dataset path: the images/ folder inside AML-Cytomorphology_LMU
-# contains 21 subdirectories (BLA, LYT, NGS, MON, etc.)
-DATASET_ROOT = "/kaggle/working/HemaVision/AML-Cytomorphology_LMU"
-if not os.path.exists(DATASET_ROOT):
-    # Try new and old Kaggle path formats
-    for fallback in [
-        "/kaggle/input/datasets/binilj04/aml-cytomorphology",
-        "/kaggle/input/datasets/umarsani1605/aml-cytomorphology",
-        "/kaggle/input/aml-cytomorphology",
-        "/kaggle/input/aml-cytomorphology-lmu",
-    ]:
-        if os.path.exists(fallback):
-            DATASET_ROOT = fallback
-            break
-
-CONFIG = {
-    # Dataset — points to the images/ subfolder with 21 class dirs
-    "data_dir": os.path.join(DATASET_ROOT, "images"),
-    "train_dir": None,  # Will be auto-detected
-    "val_dir": None,    # Will be auto-detected
-
-    # Model
-    "model_name": "efficientnet_b3",  # Options: resnet50, efficientnet_b3, vit_base_patch16_224
-    "num_classes": None,  # Auto-detected from folder structure
-    "pretrained": True,
-
-    # Training
-    "epochs": 25,
-    "batch_size": 32,
-    "learning_rate": 1e-4,
-    "weight_decay": 1e-5,
-    "img_size": 224,
-
-    # Output
-    "save_dir": "/kaggle/working/HemaVision/trained_models",
-}
-
-# ======================== AUTO-DETECT DATASET STRUCTURE ========================
-data_dir = CONFIG["data_dir"]
-
-# Try to find train/val split
-if os.path.exists(data_dir):
-    subdirs = os.listdir(data_dir)
-
-    # Pattern 1: data/train/ and data/val/ (or test/)
-    if "train" in subdirs:
-        CONFIG["train_dir"] = os.path.join(data_dir, "train")
-        if "val" in subdirs:
-            CONFIG["val_dir"] = os.path.join(data_dir, "val")
-        elif "test" in subdirs:
-            CONFIG["val_dir"] = os.path.join(data_dir, "test")
-        elif "valid" in subdirs:
-            CONFIG["val_dir"] = os.path.join(data_dir, "valid")
-
-    # Pattern 2: data/Training/ and data/Testing/
-    elif "Training" in subdirs:
-        CONFIG["train_dir"] = os.path.join(data_dir, "Training")
-        if "Testing" in subdirs:
-            CONFIG["val_dir"] = os.path.join(data_dir, "Testing")
-
-    # Pattern 3: Flat structure (data/class1/, data/class2/, etc.)
-    else:
-        # Check if subdirs contain images directly (flat class structure)
-        has_class_dirs = all(
-            os.path.isdir(os.path.join(data_dir, d))
-            for d in subdirs
-            if not d.startswith('.')
-        )
-        if has_class_dirs and len(subdirs) > 1:
-            print("Flat dataset structure detected. Will create train/val split.")
-            CONFIG["train_dir"] = data_dir  # Will handle split in DataLoader
-            CONFIG["val_dir"] = None
-
-print(f"Train dir: {CONFIG['train_dir']}")
-print(f"Val dir: {CONFIG['val_dir']}")
-
-# ======================== TRANSFORMS ========================
-train_transform = transforms.Compose([
-    transforms.Resize((CONFIG["img_size"], CONFIG["img_size"])),
-    transforms.RandomHorizontalFlip(),
-    transforms.RandomVerticalFlip(),
-    transforms.RandomRotation(20),
-    transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
-    transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
-
-val_transform = transforms.Compose([
-    transforms.Resize((CONFIG["img_size"], CONFIG["img_size"])),
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
-])
-
-# ======================== LOAD DATA ========================
-if CONFIG["train_dir"] and os.path.exists(CONFIG["train_dir"]):
-    if CONFIG["val_dir"] and os.path.exists(CONFIG["val_dir"]):
-        # Separate train and val directories
-        train_dataset = datasets.ImageFolder(CONFIG["train_dir"], transform=train_transform)
-        val_dataset = datasets.ImageFolder(CONFIG["val_dir"], transform=val_transform)
-    else:
-        # Single directory - do random split
-        from torch.utils.data import random_split
-        full_dataset = datasets.ImageFolder(CONFIG["train_dir"], transform=train_transform)
-        train_size = int(0.8 * len(full_dataset))
-        val_size = len(full_dataset) - train_size
-        train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size])
-
-    CONFIG["num_classes"] = len(train_dataset.dataset.classes if hasattr(train_dataset, 'dataset') else train_dataset.classes)
-    class_names = train_dataset.dataset.classes if hasattr(train_dataset, 'dataset') else train_dataset.classes
-
-    print(f"\nDataset Summary:")
-    print(f"   Classes ({CONFIG['num_classes']}): {class_names}")
-    print(f"   Train samples: {len(train_dataset)}")
-    print(f"   Val samples: {len(val_dataset)}")
-
-    train_loader = DataLoader(train_dataset, batch_size=CONFIG["batch_size"], shuffle=True, num_workers=2, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=CONFIG["batch_size"], shuffle=False, num_workers=2, pin_memory=True)
-else:
-    raise FileNotFoundError(
-        f"Dataset not found at {CONFIG['data_dir']}!\n"
-        "Please:\n"
-        "  1. Add a dataset via Kaggle's 'Add Data' button\n"
-        "  2. Update CONFIG['data_dir'] to point to /kaggle/input/<your-dataset>/\n"
-    )
-
-# ======================== MODEL ========================
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"\nDevice: {device}")
-
-model = timm.create_model(CONFIG["model_name"], pretrained=CONFIG["pretrained"], num_classes=CONFIG["num_classes"])
-model = model.to(device)
-
-print(f"Model: {CONFIG['model_name']} ({sum(p.numel() for p in model.parameters()):,} params)")
-
-# ======================== TRAINING SETUP ========================
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.AdamW(model.parameters(), lr=CONFIG["learning_rate"], weight_decay=CONFIG["weight_decay"])
-scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=CONFIG["epochs"])
-
-# ======================== TRAINING LOOP ========================
-os.makedirs(CONFIG["save_dir"], exist_ok=True)
-
-best_val_acc = 0.0
-history = {"train_loss": [], "val_loss": [], "train_acc": [], "val_acc": []}
-
-print(f"\nStarting training for {CONFIG['epochs']} epochs...\n")
-
-for epoch in range(CONFIG["epochs"]):
-    # --- Train ---
-    model.train()
-    running_loss, correct, total = 0.0, 0, 0
-
-    pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{CONFIG['epochs']} [Train]")
-    for images, labels in pbar:
-        images, labels = images.to(device), labels.to(device)
-
-        optimizer.zero_grad()
-        outputs = model(images)
-        loss = criterion(outputs, labels)
-        loss.backward()
-        optimizer.step()
-
-        running_loss += loss.item() * images.size(0)
-        _, predicted = outputs.max(1)
-        total += labels.size(0)
-        correct += predicted.eq(labels).sum().item()
-
-        pbar.set_postfix({"loss": f"{loss.item():.4f}", "acc": f"{100.*correct/total:.1f}%"})
-
-    train_loss = running_loss / total
-    train_acc = 100. * correct / total
-
-    # --- Validate ---
-    model.eval()
-    running_loss, correct, total = 0.0, 0, 0
-
-    with torch.no_grad():
-        for images, labels in tqdm(val_loader, desc=f"Epoch {epoch+1}/{CONFIG['epochs']} [Val]"):
-            images, labels = images.to(device), labels.to(device)
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-
-            running_loss += loss.item() * images.size(0)
-            _, predicted = outputs.max(1)
-            total += labels.size(0)
-            correct += predicted.eq(labels).sum().item()
-
-    val_loss = running_loss / total
-    val_acc = 100. * correct / total
-
-    scheduler.step()
-
-    # Log
-    history["train_loss"].append(train_loss)
-    history["val_loss"].append(val_loss)
-    history["train_acc"].append(train_acc)
-    history["val_acc"].append(val_acc)
-
-    print(f"  Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.2f}%")
-    print(f"  Val Loss:   {val_loss:.4f} | Val Acc:   {val_acc:.2f}%")
-
-    # Save best model
-    if val_acc > best_val_acc:
-        best_val_acc = val_acc
-        save_path = os.path.join(CONFIG["save_dir"], "best_model.pth")
-        torch.save({
-            "epoch": epoch,
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-            "val_acc": val_acc,
-            "class_names": class_names,
-            "config": CONFIG,
-        }, save_path)
-        print(f"  Saved best model (val_acc: {val_acc:.2f}%)")
-
-    print()
-
-print(f"Training complete! Best validation accuracy: {best_val_acc:.2f}%")
-```
-
----
-
-## Cell 10: Plot Training Curves & Evaluate
-
-```python
-# Cell 10: Visualize results
-import matplotlib.pyplot as plt
-
-fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-# Loss
-axes[0].plot(history["train_loss"], label="Train Loss", linewidth=2)
-axes[0].plot(history["val_loss"], label="Val Loss", linewidth=2)
-axes[0].set_xlabel("Epoch")
-axes[0].set_ylabel("Loss")
-axes[0].set_title("Training & Validation Loss")
-axes[0].legend()
-axes[0].grid(True, alpha=0.3)
-
-# Accuracy
-axes[1].plot(history["train_acc"], label="Train Acc", linewidth=2)
-axes[1].plot(history["val_acc"], label="Val Acc", linewidth=2)
-axes[1].set_xlabel("Epoch")
-axes[1].set_ylabel("Accuracy (%)")
-axes[1].set_title("Training & Validation Accuracy")
-axes[1].legend()
-axes[1].grid(True, alpha=0.3)
-
-plt.tight_layout()
-plt.savefig("/kaggle/working/HemaVision/training_curves.png", dpi=150, bbox_inches="tight")
-plt.show()
-
-print(f"\nFinal Results:")
-print(f"   Best Val Accuracy: {best_val_acc:.2f}%")
-print(f"   Model saved to: {CONFIG['save_dir']}/best_model.pth")
-```
-
----
-
-## Cell 11: Confusion Matrix & Classification Report
-
-```python
-# Cell 11: Detailed evaluation
-from sklearn.metrics import classification_report, confusion_matrix
-import seaborn as sns
 import numpy as np
 
-model.eval()
-all_preds, all_labels = [], []
+BASE = "/kaggle/working/HemaVision"
+RESULTS_DIR = os.path.join(BASE, "outputs", "results")
 
-with torch.no_grad():
-    for images, labels in tqdm(val_loader, desc="Evaluating"):
-        images = images.to(device)
-        outputs = model(images)
-        _, predicted = outputs.max(1)
-        all_preds.extend(predicted.cpu().numpy())
-        all_labels.extend(labels.numpy())
+# ── Load training history ──
+history_path = os.path.join(RESULTS_DIR, "training_history.json")
+assert os.path.exists(history_path), (
+    f"training_history.json not found at {history_path}\n"
+    "Make sure Cell 8 (main.py) completed successfully."
+)
 
-all_preds = np.array(all_preds)
-all_labels = np.array(all_labels)
+with open(history_path) as f:
+    history = json.load(f)
 
-# Classification Report
-print("Classification Report:")
-print(classification_report(all_labels, all_preds, target_names=class_names))
+epochs = range(1, len(history["train_loss"]) + 1)
 
-# Confusion Matrix
-cm = confusion_matrix(all_labels, all_preds)
-plt.figure(figsize=(10, 8))
-sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", xticklabels=class_names, yticklabels=class_names)
-plt.xlabel("Predicted")
-plt.ylabel("Actual")
-plt.title("Confusion Matrix")
+# ── 4-panel training curves ──
+fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+fig.suptitle("HemaVision Training History", fontsize=18, fontweight="bold", y=0.98)
+
+# 1) Loss
+ax = axes[0, 0]
+ax.plot(epochs, history["train_loss"], "b-", label="Train", linewidth=2)
+ax.plot(epochs, history["val_loss"], "r-", label="Validation", linewidth=2)
+ax.set_xlabel("Epoch")
+ax.set_ylabel("Loss")
+ax.set_title("Loss")
+ax.legend()
+ax.grid(True, alpha=0.3)
+
+# 2) Accuracy
+ax = axes[0, 1]
+ax.plot(epochs, history["train_acc"], "b-", label="Train", linewidth=2)
+ax.plot(epochs, history["val_acc"], "r-", label="Validation", linewidth=2)
+ax.set_xlabel("Epoch")
+ax.set_ylabel("Accuracy")
+ax.set_title("Accuracy")
+ax.legend()
+ax.grid(True, alpha=0.3)
+
+# 3) AUC-ROC + F1
+ax = axes[1, 0]
+ax.plot(epochs, history["val_auc"], "g-", label="Val AUC-ROC", linewidth=2)
+ax.plot(epochs, history["val_f1"], "m-", label="Val F1", linewidth=2)
+if "val_precision" in history:
+    ax.plot(epochs, history["val_precision"], "c--", label="Val Precision", linewidth=1.5, alpha=0.7)
+if "val_recall" in history:
+    ax.plot(epochs, history["val_recall"], "y--", label="Val Recall", linewidth=1.5, alpha=0.7)
+ax.set_xlabel("Epoch")
+ax.set_ylabel("Score")
+ax.set_title("Validation Metrics")
+ax.legend(fontsize=9)
+ax.grid(True, alpha=0.3)
+
+# 4) Learning Rate
+ax = axes[1, 1]
+ax.plot(epochs, history["learning_rate"], "k-", linewidth=2)
+ax.set_xlabel("Epoch")
+ax.set_ylabel("Learning Rate")
+ax.set_title("Learning Rate Schedule")
+ax.grid(True, alpha=0.3)
+ax.ticklabel_format(style="scientific", axis="y", scilimits=(0, 0))
+
 plt.tight_layout()
-plt.savefig("/kaggle/working/HemaVision/confusion_matrix.png", dpi=150, bbox_inches="tight")
+plt.savefig(os.path.join(RESULTS_DIR, "training_curves_notebook.png"), dpi=150, bbox_inches="tight")
 plt.show()
+
+# ── Summary ──
+best_epoch = int(np.argmax(history["val_auc"])) + 1
+print(f"\n{'═' * 50}")
+print(f"  Best Epoch: {best_epoch}/{len(history['train_loss'])}")
+print(f"  Best Val AUC:  {max(history['val_auc']):.4f}")
+print(f"  Best Val F1:   {history['val_f1'][best_epoch - 1]:.4f}")
+print(f"  Best Val Acc:  {history['val_acc'][best_epoch - 1]:.4f}")
+print(f"{'═' * 50}")
 ```
 
 ---
 
-## Cell 12: Export Model for Deployment
+## Cell 10: Test Results & Confusion Matrix
 
 ```python
-# Cell 12: Export for deployment (ONNX + TorchScript)
+# Cell 10: Load test results and display confusion matrix + classification report
+# main.py evaluates the best model on the held-out test set and saves
+# all metrics (including confusion matrix) to test_results.json.
 
-# Save as TorchScript
-model.eval()
-dummy_input = torch.randn(1, 3, CONFIG["img_size"], CONFIG["img_size"]).to(device)
+import json
+import os
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 
-traced_model = torch.jit.trace(model, dummy_input)
-traced_model.save(os.path.join(CONFIG["save_dir"], "model_scripted.pt"))
-print("Saved TorchScript model: model_scripted.pt")
+BASE = "/kaggle/working/HemaVision"
+RESULTS_DIR = os.path.join(BASE, "outputs", "results")
 
-# Save as ONNX
-try:
-    torch.onnx.export(
-        model, dummy_input,
-        os.path.join(CONFIG["save_dir"], "model.onnx"),
-        export_params=True,
-        opset_version=17,
-        input_names=["input"],
-        output_names=["output"],
-        dynamic_axes={"input": {0: "batch_size"}, "output": {0: "batch_size"}}
-    )
-    print("Saved ONNX model: model.onnx")
-except Exception as e:
-    print(f"ONNX export failed: {e}")
+# ── Load test results ──
+test_path = os.path.join(RESULTS_DIR, "test_results.json")
+assert os.path.exists(test_path), (
+    f"test_results.json not found at {test_path}\n"
+    "Make sure Cell 8 (main.py) completed successfully."
+)
 
-# List all saved files
-print(f"\nSaved models in {CONFIG['save_dir']}:")
-for f in os.listdir(CONFIG["save_dir"]):
-    size = os.path.getsize(os.path.join(CONFIG["save_dir"], f)) / 1e6
-    print(f"   {f} ({size:.1f} MB)")
+with open(test_path) as f:
+    results = json.load(f)
 
-# Copy to /kaggle/working for easy download
-!cp -r {CONFIG["save_dir"]}/* /kaggle/working/
-print("\nModels copied to /kaggle/working/ for download")
+# ── Display headline metrics ──
+print("=" * 55)
+print("  TEST SET RESULTS")
+print("=" * 55)
+print(f"  Accuracy:   {results['accuracy']:.4f}")
+print(f"  Precision:  {results['precision']:.4f}")
+print(f"  Recall:     {results['recall']:.4f}")
+print(f"  F1 Score:   {results['f1']:.4f}")
+print(f"  AUC-ROC:    {results['auc_roc']:.4f}")
+print(f"  Samples:    {results['num_samples']}")
+print(f"  Pos. Rate:  {results['positive_rate']:.3f}")
+print("=" * 55)
+
+# ── Classification Report ──
+if "classification_report" in results:
+    report = results["classification_report"]
+    print("\nClassification Report:")
+    print(f"{'':>14s} {'precision':>10s} {'recall':>10s} {'f1-score':>10s} {'support':>10s}")
+    print("-" * 55)
+    class_names = ["Normal", "AML Blast"]
+    for cls in class_names:
+        if cls in report:
+            r = report[cls]
+            print(f"{cls:>14s} {r['precision']:>10.4f} {r['recall']:>10.4f} {r['f1-score']:>10.4f} {r['support']:>10.0f}")
+    print("-" * 55)
+    for avg in ["macro avg", "weighted avg"]:
+        if avg in report:
+            r = report[avg]
+            print(f"{avg:>14s} {r['precision']:>10.4f} {r['recall']:>10.4f} {r['f1-score']:>10.4f} {r['support']:>10.0f}")
+
+# ── Confusion Matrix ──
+cm = np.array(results["confusion_matrix"])
+
+fig, ax = plt.subplots(figsize=(8, 6))
+sns.heatmap(
+    cm, annot=True, fmt="d", cmap="Blues",
+    xticklabels=["Normal", "AML Blast"],
+    yticklabels=["Normal", "AML Blast"],
+    annot_kws={"size": 18},
+    ax=ax
+)
+ax.set_xlabel("Predicted", fontsize=14)
+ax.set_ylabel("Actual", fontsize=14)
+ax.set_title("Confusion Matrix — Test Set", fontsize=16, fontweight="bold")
+plt.tight_layout()
+plt.savefig(os.path.join(RESULTS_DIR, "confusion_matrix_notebook.png"), dpi=150, bbox_inches="tight")
+plt.show()
+
+# ── Breakdown ──
+tn, fp, fn, tp = cm.ravel()
+print(f"\nConfusion Matrix Breakdown:")
+print(f"  True  Negatives (Normal → Normal):    {tn}")
+print(f"  False Positives (Normal → AML):        {fp}")
+print(f"  False Negatives (AML → Normal):        {fn}")
+print(f"  True  Positives (AML → AML):           {tp}")
+print(f"\n  Specificity:  {tn / (tn + fp):.4f}")
+print(f"  Sensitivity:  {tp / (tp + fn):.4f}")
+
+# ── Also load the full pipeline summary ──
+summary_path = os.path.join(RESULTS_DIR, "results_summary.json")
+if os.path.exists(summary_path):
+    with open(summary_path) as f:
+        summary = json.load(f)
+    print(f"\n{'═' * 55}")
+    print(f"  Pipeline Summary")
+    print(f"{'═' * 55}")
+    print(f"  Duration:   {summary.get('duration_minutes', '?')} min")
+    ds = summary.get("dataset", {})
+    print(f"  Images:     {ds.get('total_images', '?')}")
+    print(f"  Patients:   {ds.get('total_patients', '?')}")
+    m = summary.get("model", {})
+    print(f"  Backbone:   {m.get('backbone', '?')}")
+    print(f"  Params:     {m.get('total_params', '?'):,} total, {m.get('trainable_params', '?'):,} trainable")
+    print(f"{'═' * 55}")
+```
+
+---
+
+## Cell 11: View Grad-CAM Visualizations
+
+```python
+# Cell 11: Display Grad-CAM explainability visualizations
+# main.py generates Grad-CAM++ images in outputs/gradcam_results/
+
+import os
+import glob
+import matplotlib.pyplot as plt
+from PIL import Image
+
+BASE = "/kaggle/working/HemaVision"
+GRADCAM_DIR = os.path.join(BASE, "outputs", "gradcam_results")
+
+gradcam_images = sorted(glob.glob(os.path.join(GRADCAM_DIR, "*.png")))
+
+if not gradcam_images:
+    print(f"No Grad-CAM images found in {GRADCAM_DIR}")
+    print("This can happen if Grad-CAM generation failed or was skipped.")
+else:
+    n = min(len(gradcam_images), 12)  # Show up to 12 images
+    cols = min(n, 4)
+    rows = (n + cols - 1) // cols
+
+    fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 5 * rows))
+    fig.suptitle("Grad-CAM++ Explainability Visualizations", fontsize=18, fontweight="bold")
+
+    if rows == 1 and cols == 1:
+        axes = np.array([axes])
+    axes_flat = axes.flatten() if hasattr(axes, 'flatten') else [axes]
+
+    for i, ax in enumerate(axes_flat):
+        if i < n:
+            img = Image.open(gradcam_images[i])
+            ax.imshow(img)
+            ax.set_title(os.path.basename(gradcam_images[i]), fontsize=9)
+        ax.axis("off")
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(RESULTS_DIR, "gradcam_gallery.png"), dpi=150, bbox_inches="tight")
+    plt.show()
+
+    print(f"\n✓ {len(gradcam_images)} Grad-CAM visualizations found in:")
+    print(f"  {GRADCAM_DIR}")
+```
+
+---
+
+## Cell 12: Verify & Download All Outputs
+
+```python
+# Cell 12: List all output files and copy to /kaggle/working/ for download
+# main.py handles both .pt and .onnx export, so we just verify and copy.
+
+import os
+import shutil
+
+BASE = "/kaggle/working/HemaVision"
+OUTPUT_DIR = os.path.join(BASE, "outputs")
+
+print("=" * 60)
+print("  HemaVision Output Files")
+print("=" * 60)
+
+total_size = 0
+file_list = []
+
+for root, dirs, files in os.walk(OUTPUT_DIR):
+    for fname in sorted(files):
+        fpath = os.path.join(root, fname)
+        size_mb = os.path.getsize(fpath) / 1e6
+        total_size += size_mb
+        rel = os.path.relpath(fpath, BASE)
+        file_list.append((rel, size_mb))
+        icon = "🟢" if size_mb > 0.001 else "⚪"
+        print(f"  {icon} {rel:55s} {size_mb:>8.2f} MB")
+
+print(f"\n  Total: {len(file_list)} files, {total_size:.1f} MB")
+
+# ── Verify critical files ──
+print(f"\n{'─' * 60}")
+print("  Critical File Check")
+print(f"{'─' * 60}")
+
+critical = {
+    "Best model (.pt)":    "outputs/checkpoints/best_model.pt",
+    "Final model (.pt)":   "outputs/checkpoints/final_model.pt",
+    "ONNX model (.onnx)":  "outputs/checkpoints/final_model.onnx",
+    "Training history":    "outputs/results/training_history.json",
+    "Test results":        "outputs/results/test_results.json",
+    "Pipeline summary":    "outputs/results/results_summary.json",
+    "Training curves":     "outputs/results/training_history.png",
+}
+
+all_ok = True
+for label, rel_path in critical.items():
+    full = os.path.join(BASE, rel_path)
+    exists = os.path.exists(full)
+    size = os.path.getsize(full) / 1e6 if exists else 0
+    status = f"✅ ({size:.1f} MB)" if exists else "❌ MISSING"
+    print(f"  {label:25s} {status}")
+    if not exists:
+        all_ok = False
+
+# ── Copy key artifacts to /kaggle/working/ for one-click download ──
+print(f"\n{'─' * 60}")
+print("  Copying artifacts to /kaggle/working/ for download...")
+print(f"{'─' * 60}")
+
+download_files = [
+    "outputs/checkpoints/best_model.pt",
+    "outputs/checkpoints/final_model.pt",
+    "outputs/checkpoints/final_model.onnx",
+    "outputs/results/results_summary.json",
+    "outputs/results/training_history.json",
+    "outputs/results/test_results.json",
+    "outputs/results/training_history.png",
+]
+
+for rel_path in download_files:
+    src = os.path.join(BASE, rel_path)
+    dst = os.path.join("/kaggle/working", os.path.basename(rel_path))
+    if os.path.exists(src):
+        shutil.copy2(src, dst)
+        print(f"  ✓ {os.path.basename(rel_path)}")
+    else:
+        print(f"  ✗ {os.path.basename(rel_path)} (not found)")
+
+# Copy Grad-CAM directory
+gradcam_src = os.path.join(BASE, "outputs", "gradcam_results")
+gradcam_dst = "/kaggle/working/gradcam_results"
+if os.path.exists(gradcam_src):
+    if os.path.exists(gradcam_dst):
+        shutil.rmtree(gradcam_dst)
+    shutil.copytree(gradcam_src, gradcam_dst)
+    n_gcam = len(os.listdir(gradcam_dst))
+    print(f"  ✓ gradcam_results/ ({n_gcam} files)")
+
+print(f"\n{'═' * 60}")
+print("  Done! Download artifacts from the 'Output' tab.")
+print(f"{'═' * 60}")
 ```
 
 ---
@@ -835,10 +813,10 @@ print("\nModels copied to /kaggle/working/ for download")
 
 | Item | Detail |
 |---|---|
-| **GPU** | Enable GPU T4 x2 or P100 in Kaggle Settings -> Accelerator |
-| **Internet** | Must be ON (Settings -> Internet -> On) for git clone and pip install |
-| **Dataset** | **binilj04/aml-cytomorphology** — Add via Kaggle "Add Data" sidebar, search "AML-Cytomorphology-WBC". ~6.2 GB, 18K+ images, 21 classes incl. BLA (blast). ⚠️ Do NOT use `walkersneps/aml-cytomorphology-lmu` (missing BLA class!) |
-| **Cell 8** | Runs `main.py --data-root <dataset_path>` — the project's full pipeline (data loading, patient-level split, dual-stream model, training, Grad-CAM) |
-| **Cell 9** | Fallback standalone training loop. Only use if Cell 8 fails |
-| **Runtime** | ~2-3 hours for 50 epochs on T4 GPU (18K+ images) |
-| **Output** | best_model.pt, training_history.png, gradcam_results/, results_summary.json — all in outputs/ |
+| **GPU** | Enable GPU T4 x2 or P100 in Kaggle Settings → Accelerator |
+| **Internet** | Must be ON (Settings → Internet → On) for git clone and pip install |
+| **Dataset** | **binilj04/aml-cytomorphology** — Add via Kaggle "Add Data" sidebar, search "AML-Cytomorphology-WBC". ~6.2 GB, 18K+ images, 15 classes incl. MYO (blast). ⚠️ Do NOT use `walkersneps/aml-cytomorphology-lmu` (missing blast class!) |
+| **Cell 8** | Runs `main.py --data-root <path>` — full pipeline (data loading, patient-level split, dual-stream model, training, evaluation, Grad-CAM, ONNX export) |
+| **Cells 9-12** | Post-training cells that load results from disk (JSON files saved by main.py) — no in-memory dependencies on Cell 8 |
+| **Runtime** | ~50 min for 50 epochs on T4 GPU (18K+ images) |
+| **Outputs** | best_model.pt, final_model.pt, final_model.onnx, training_history.json, test_results.json, results_summary.json, gradcam_results/ — all in outputs/ |

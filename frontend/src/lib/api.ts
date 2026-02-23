@@ -1,10 +1,12 @@
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// In dev (Codespaces), use the Vite proxy at /api which forwards to FastAPI.
+// In production, set VITE_API_URL to the actual backend URL.
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 
 const api = axios.create({
   baseURL: API_URL,
-  timeout: 30000,
+  timeout: 60000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -25,6 +27,33 @@ export interface PredictionResponse {
   patient_context: {
     morphological_features: string;
   };
+}
+
+// ── Multi-cell (auto-segmentation) response ──────────────
+
+export interface CellResult {
+  cell_index: number;
+  prediction: string;
+  probability: number;
+  confidence: number;
+  risk_level: string;
+  risk_color: string;
+  gradcam_base64: string | null;
+}
+
+export interface MultiCellResponse {
+  is_multi_cell: boolean;
+  num_cells: number;
+  overall_prediction: string;
+  overall_risk_level: string;
+  overall_risk_color: string;
+  blast_count: number;
+  normal_count: number;
+  blast_percentage: number;
+  cells: CellResult[];
+  annotated_image_base64: string | null;
+  inference_time_ms: number;
+  segmentation_message: string;
 }
 
 export interface HealthResponse {
@@ -57,6 +86,11 @@ export async function getModelInfo(): Promise<ModelInfoResponse> {
 
 export async function predict(request: PredictionRequest): Promise<PredictionResponse> {
   const { data } = await api.post<PredictionResponse>('/predict', request);
+  return data;
+}
+
+export async function predictMultiCell(request: PredictionRequest): Promise<MultiCellResponse> {
+  const { data } = await api.post<MultiCellResponse>('/predict/multi', request);
   return data;
 }
 

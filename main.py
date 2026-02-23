@@ -263,7 +263,7 @@ def run_pipeline(config: HemaVisionConfig, eval_only: bool = False,
                 "tabular": {0: "batch_size"},
                 "logits": {0: "batch_size"},
             },
-            opset_version=17,
+            opset_version=18,
         )
         # Move model back to original device
         model.to(device)

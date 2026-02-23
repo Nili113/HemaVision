@@ -1,8 +1,8 @@
 import { useState, useCallback } from 'react';
-import { predict, fileToBase64, type PredictionResponse } from '../lib/api';
+import { predictMultiCell, fileToBase64, type MultiCellResponse } from '../lib/api';
 
 interface UseAnalysisReturn {
-  result: PredictionResponse | null;
+  result: MultiCellResponse | null;
   isLoading: boolean;
   error: string | null;
   analyze: (file: File) => Promise<void>;
@@ -10,7 +10,7 @@ interface UseAnalysisReturn {
 }
 
 export function useAnalysis(): UseAnalysisReturn {
-  const [result, setResult] = useState<PredictionResponse | null>(null);
+  const [result, setResult] = useState<MultiCellResponse | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -21,7 +21,7 @@ export function useAnalysis(): UseAnalysisReturn {
 
     try {
       const base64 = await fileToBase64(file);
-      const response = await predict({ image_base64: base64 });
+      const response = await predictMultiCell({ image_base64: base64 });
       setResult(response);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Analysis failed. Please try again.';

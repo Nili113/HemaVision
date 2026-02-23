@@ -33,42 +33,40 @@ export default function GradCAMViewer({ originalImage, gradcamBase64 }: GradCAMV
   const imageSrc = getImageSrc();
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-surface p-8">
+    <div className="rounded-xl border border-slate-800 bg-surface overflow-hidden">
       {/* Header */}
-      <div className="flex items-center gap-3 mb-6">
-        <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-          <span className="material-icons-outlined text-primary text-lg">visibility</span>
+      <div className="flex items-center justify-between px-6 pt-5 pb-4">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+            <span className="material-icons-outlined text-primary text-base">visibility</span>
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold text-white">Explainability</h3>
+            <p className="text-xs text-slate-500">Regions that influenced the prediction</p>
+          </div>
         </div>
-        <div>
-          <h3 className="text-base font-semibold text-white tracking-tight">
-            Explainability
-          </h3>
-          <p className="text-sm text-slate-400">
-            Grad-CAM highlights regions that influenced the prediction
-          </p>
-        </div>
-      </div>
 
-      {/* View Selector — segmented control */}
-      <div className="flex gap-1 mb-6 p-1 bg-slate-800 rounded-lg inline-flex">
-        {views.map((view) => {
-          const isActive = activeView === view.id;
-          return (
-            <button
-              key={view.id}
-              onClick={() => setActiveView(view.id)}
-              className={clsx(
-                'flex items-center gap-1.5 px-4 py-2 rounded-md text-sm font-medium transition-all duration-200',
-                isActive
-                  ? 'bg-primary text-white shadow-glow'
-                  : 'text-slate-400 hover:text-white'
-              )}
-            >
-              <span className="material-icons-outlined text-base">{view.icon}</span>
-              {view.label}
-            </button>
-          );
-        })}
+        {/* View Selector — segmented control */}
+        <div className="flex gap-0.5 p-0.5 bg-slate-800/80 rounded-lg">
+          {views.map((view) => {
+            const isActive = activeView === view.id;
+            return (
+              <button
+                key={view.id}
+                onClick={() => setActiveView(view.id)}
+                className={clsx(
+                  'flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200',
+                  isActive
+                    ? 'bg-primary text-white shadow-md'
+                    : 'text-slate-500 hover:text-slate-300'
+                )}
+              >
+                <span className="material-icons-outlined text-sm">{view.icon}</span>
+                <span className="hidden sm:inline">{view.label}</span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Image Display */}
@@ -79,30 +77,31 @@ export default function GradCAMViewer({ originalImage, gradcamBase64 }: GradCAMV
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
-          className="relative aspect-square bg-slate-900 rounded-xl overflow-hidden max-w-md mx-auto border border-slate-800"
+          className="relative bg-slate-900 rounded-lg overflow-hidden border border-slate-800 mx-4 mb-4 flex items-center justify-center"
+          style={{ minHeight: '220px' }}
         >
           {imageSrc ? (
             <img
               src={imageSrc}
               alt={`${activeView} view`}
-              className="w-full h-full object-contain"
+              className="max-w-full max-h-[480px] object-contain"
             />
           ) : (
-            <div className="flex flex-col items-center justify-center h-full gap-2">
-              <span className="material-icons-outlined text-3xl text-slate-600">image</span>
-              <p className="text-sm text-slate-500">No image available</p>
+            <div className="flex flex-col items-center justify-center h-full gap-2 py-16">
+              <span className="material-icons-outlined text-3xl text-slate-700">image</span>
+              <p className="text-xs text-slate-600">No image available</p>
             </div>
           )}
         </motion.div>
       </AnimatePresence>
 
       {/* Legend */}
-      <div className="mt-6 flex items-center justify-between flex-wrap gap-3">
-        <span className="text-xs font-medium text-slate-500">Activation Intensity</span>
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-slate-500">Low</span>
-          <div className="w-24 h-1.5 rounded-full bg-gradient-to-r from-blue-500 via-green-500 via-yellow-400 to-red-500" />
-          <span className="text-xs text-slate-500">High</span>
+      <div className="px-6 pb-4 flex items-center justify-between">
+        <span className="text-[10px] font-medium text-slate-600 uppercase tracking-wider">Activation Intensity</span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] text-slate-600">Low</span>
+          <div className="w-20 h-1 rounded-full bg-gradient-to-r from-blue-500 via-green-500 via-yellow-400 to-red-500" />
+          <span className="text-[10px] text-slate-600">High</span>
         </div>
       </div>
     </div>

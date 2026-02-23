@@ -79,8 +79,9 @@ export default function About() {
             Built to earn clinical trust.
           </h1>
           <p className="text-base text-slate-400 max-w-[520px] mt-5 leading-relaxed">
-            A hybrid multimodal architecture that fuses deep CNN features with
-            handcrafted morphological analysis — and explains every prediction.
+            A hybrid multimodal architecture that auto-segments cells, extracts 20
+            handcrafted morphological features, fuses them with deep CNN features
+            — and explains every prediction with Grad-CAM.
           </p>
         </FadeIn>
       </section>
@@ -98,7 +99,12 @@ export default function About() {
           <FadeIn delay={0.1}>
             <div className="max-w-xl mx-auto space-y-0">
               {/* Input */}
-              <PipelineNode icon="image" label="Cell Image" sub="224 × 224 × 3 microscopy" accent="#137fec" />
+              <PipelineNode icon="image" label="Blood Slide Upload" sub="Single cell or whole smear field" accent="#137fec" />
+
+              <PipelineConnector />
+
+              {/* Auto-segmentation */}
+              <PipelineNode icon="grid_view" label="Auto-Segmentation" sub="Otsu + contour detection → per-cell crops (224×224)" accent="#f59e0b" highlight />
 
               <PipelineConnector />
 
@@ -110,10 +116,12 @@ export default function About() {
 
               {/* Feature detail */}
               <div className="px-4 py-3 rounded-lg border border-slate-800/40 text-xs text-slate-500 leading-relaxed" style={{ background: 'rgba(139,92,246,0.03)' }}>
-                <span className="text-slate-400 font-medium">Morphological features:</span>{' '}
-                cell area, perimeter, circularity, eccentricity, nuclear area, N:C ratio,
-                nuclear irregularity, RGB/HSV colour stats, stain intensity, GLCM texture (4),
-                solidity — extracted via Otsu + HSV segmentation
+                <span className="text-slate-400 font-medium">20 morphological features:</span>{' '}
+                <span className="text-slate-500">Geometry</span> → cell area, perimeter, circularity, eccentricity &nbsp;|&nbsp;
+                <span className="text-slate-500">Nucleus</span> → nuclear area, N:C ratio, nuclear irregularity &nbsp;|&nbsp;
+                <span className="text-slate-500">Colour</span> → RGB means (3), HSV means (3), stain intensity &amp; variance &nbsp;|&nbsp;
+                <span className="text-slate-500">Texture</span> → GLCM contrast, homogeneity, energy, correlation &nbsp;|&nbsp;
+                <span className="text-slate-500">Shape</span> → solidity
               </div>
 
               <PipelineFork />
@@ -130,10 +138,10 @@ export default function About() {
                   <span className="material-icons-outlined text-emerald-400 text-lg">check_circle</span>
                   <p className="text-sm font-semibold text-white">Classifier Output</p>
                 </div>
-                <p className="text-xs text-slate-500">FC → ReLU → Dropout → FC</p>
+                <p className="text-xs text-slate-500">FC(2080→256) → BN → ReLU → Dropout → FC(256→1)</p>
                 <span className="inline-block mt-1.5 px-3 py-0.5 rounded-full text-xs font-semibold text-emerald-400"
                   style={{ background: 'rgba(34,197,94,0.1)' }}>
-                  P(AML) ∈ [0, 1]
+                  P(AML) ∈ [0, 1] &nbsp; threshold = 0.786
                 </span>
               </div>
             </div>
@@ -156,44 +164,44 @@ export default function About() {
             {[
               {
                 num: '01',
-                icon: 'merge',
-                title: 'Multimodal Fusion',
-                body: 'Fuses deep CNN features from ResNet-50 with 20 handcrafted morphological features (geometry, nucleus, colour, texture) via late fusion.',
-                color: '#137fec',
-              },
-              {
-                num: '02',
-                icon: 'visibility',
-                title: 'Grad-CAM Explainability',
-                body: 'Gradient-weighted Class Activation Mapping highlights discriminative cell regions to build clinical trust.',
-                color: '#8b5cf6',
-              },
-              {
-                num: '03',
-                icon: 'call_split',
-                title: 'Patient-Level Splitting',
-                body: 'Data split by patient ID to prevent leakage — all images from one patient stay in the same split.',
-                color: '#06b6d4',
-              },
-              {
-                num: '04',
-                icon: 'balance',
-                title: 'Class Imbalance Handling',
-                body: 'Weighted BCE loss and weighted random sampling ensure balanced learning despite skewed class distribution.',
+                icon: 'grid_view',
+                title: 'Auto Cell Segmentation',
+                body: 'Upload a whole blood smear — Otsu thresholding and contour detection automatically isolate individual cells for per-cell analysis.',
                 color: '#f59e0b',
               },
               {
+                num: '02',
+                icon: 'merge',
+                title: 'Multimodal Fusion',
+                body: 'Fuses 2048-dim ResNet-50 visual features with a 32-dim MLP encoding of 20 handcrafted morphological measurements via late concatenation.',
+                color: '#137fec',
+              },
+              {
+                num: '03',
+                icon: 'visibility',
+                title: 'Grad-CAM Explainability',
+                body: 'Generates heatmaps from layer3 and layer4 of ResNet-50, highlighting which cell regions drove each prediction.',
+                color: '#8b5cf6',
+              },
+              {
+                num: '04',
+                icon: 'call_split',
+                title: 'Patient-Level Splitting',
+                body: 'Train/val/test split by patient ID — all images from one patient stay in the same split, preventing data leakage.',
+                color: '#06b6d4',
+              },
+              {
                 num: '05',
-                icon: 'school',
-                title: 'Transfer Learning',
-                body: 'ImageNet-pretrained ResNet-50 backbone with optional fine-tuning for optimal convergence on medical data.',
+                icon: 'balance',
+                title: 'Class Imbalance Handling',
+                body: 'Weighted BCE loss and weighted random sampling ensure balanced learning despite skewed class distribution.',
                 color: '#10b981',
               },
               {
                 num: '06',
-                icon: 'rocket_launch',
-                title: 'Production Ready',
-                body: 'FastAPI backend, React dashboard, Gradio demo, and full deployment configs included.',
+                icon: 'tune',
+                title: 'Optimized Threshold',
+                body: 'Classification threshold (0.786) tuned on validation set by maximizing Youden\'s J-statistic for optimal sensitivity/specificity balance.',
                 color: '#ef4444',
               },
             ].map((item, i) => (
@@ -262,7 +270,7 @@ export default function About() {
             <p className="text-sm text-slate-300 leading-relaxed max-w-[580px] mb-4">
               Trained on the <strong className="font-semibold text-white">Munich AML-Cytomorphology</strong> dataset
               from LMU Munich, containing 18,000+ single-cell microscopy images from 200+ patients
-              with expert annotations for 21 cell types.
+              with expert annotations. Binary classification: blast cells vs. normal haematopoietic cells.
             </p>
             <a
               href="https://www.cancerimagingarchive.net/"

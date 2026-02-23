@@ -18,7 +18,7 @@ Features:
   • Comprehensive error handling
   • Base64 image support
 
-Author: HemaVision Team
+Author: Firoj Paudel
 """
 
 import io
@@ -50,6 +50,7 @@ from core.morphology import (
     MORPHOLOGY_FEATURE_NAMES,
     NUM_MORPHOLOGY_FEATURES,
 )
+from core.cell_segmenter import segment_cells, SegmentationResult
 from utils.config import get_config
 from utils.database import AnalysisDatabase, AnalysisRecord, UserRecord
 
@@ -100,6 +101,33 @@ class PredictionResponse(BaseModel):
     gradcam_base64: Optional[str] = None
     inference_time_ms: float
     patient_context: dict
+
+
+class CellResult(BaseModel):
+    """Result for a single segmented cell."""
+    cell_index: int
+    prediction: str
+    probability: float
+    confidence: float
+    risk_level: str
+    risk_color: str
+    gradcam_base64: Optional[str] = None
+
+
+class MultiCellResponse(BaseModel):
+    """Response when a multi-cell image is auto-segmented."""
+    is_multi_cell: bool
+    num_cells: int
+    overall_prediction: str
+    overall_risk_level: str
+    overall_risk_color: str
+    blast_count: int
+    normal_count: int
+    blast_percentage: float
+    cells: List[CellResult]
+    annotated_image_base64: Optional[str] = None
+    inference_time_ms: float
+    segmentation_message: str
 
 
 class BatchPredictionRequest(BaseModel):
@@ -320,6 +348,102 @@ def run_prediction(
     )
 
 
+def run_multi_cell_prediction(
+    image: Image.Image,
+    include_gradcam: bool = True,
+) -> MultiCellResponse:
+    """Segment a multi-cell image and predict each cell."""
+    global MODEL, GRADCAM_ENGINE
+    if MODEL is None:
+        raise HTTPException(status_code=503, detail="Model not loaded")
+
+    start = time.perf_counter()
+
+    seg = segment_cells(image, max_cells=20, annotate=True)
+    cells = seg.cells
+
+    cell_results: List[CellResult] = []
+    for cell_crop in cells:
+        cell_img = cell_crop.image.convert("RGB")
+        cell_tensor = TRANSFORM(cell_img).unsqueeze(0).to(DEVICE)
+
+        morph_vec = extract_single_image_features(cell_img, normalize=True)
+        tabular = torch.tensor(morph_vec, dtype=torch.float32).unsqueeze(0).to(DEVICE)
+        if tabular.shape[1] < NUM_MODEL_TABULAR_FEATURES:
+            pad = torch.zeros(1, NUM_MODEL_TABULAR_FEATURES - tabular.shape[1], device=DEVICE)
+            tabular = torch.cat([tabular, pad], dim=1)
+        elif tabular.shape[1] > NUM_MODEL_TABULAR_FEATURES:
+            tabular = tabular[:, :NUM_MODEL_TABULAR_FEATURES]
+
+        gcam_b64 = None
+        if include_gradcam and GRADCAM_ENGINE is not None:
+            heatmap, prob = GRADCAM_ENGINE.generate(cell_tensor, tabular)
+            original_np = np.array(cell_img.resize((224, 224)))
+            overlay = GRADCAM_ENGINE.create_overlay(original_np, heatmap, alpha=0.45)
+            buf = io.BytesIO()
+            Image.fromarray(overlay).save(buf, format="PNG")
+            gcam_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        else:
+            MODEL.eval()
+            with torch.no_grad():
+                logits = MODEL(cell_tensor, tabular)
+                prob = torch.sigmoid(logits).item()
+
+        is_blast = prob > OPTIMAL_THRESHOLD
+        conf = prob if is_blast else 1 - prob
+        cell_results.append(CellResult(
+            cell_index=cell_crop.index,
+            prediction="AML Blast (Malignant)" if is_blast else "Normal Cell (Benign)",
+            probability=round(prob, 4),
+            confidence=round(conf, 4),
+            risk_level="HIGH RISK" if (is_blast and prob > 0.85) else "MODERATE RISK" if is_blast else "LOW RISK",
+            risk_color="#FF3B30" if (is_blast and prob > 0.85) else "#FF9500" if is_blast else "#34C759",
+            gradcam_base64=gcam_b64,
+        ))
+
+    # Annotated image
+    ann_b64 = None
+    if seg.annotated_image:
+        buf = io.BytesIO()
+        seg.annotated_image.save(buf, format="PNG")
+        ann_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    n = len(cell_results)
+    n_blast = sum(1 for c in cell_results if "Blast" in c.prediction)
+    n_normal = n - n_blast
+    blast_pct = n_blast / n * 100 if n > 0 else 0
+
+    if n_blast == 0:
+        overall = "Normal — No Blasts Detected"
+        risk = "LOW RISK"
+        risk_c = "#34C759"
+    elif blast_pct >= 20:
+        overall = f"AML Suspected — {n_blast}/{n} Blast Cells"
+        risk = "HIGH RISK"
+        risk_c = "#FF3B30"
+    else:
+        overall = f"Atypical — {n_blast}/{n} Blast Cells"
+        risk = "MODERATE RISK"
+        risk_c = "#FF9500"
+
+    elapsed = (time.perf_counter() - start) * 1000
+
+    return MultiCellResponse(
+        is_multi_cell=seg.is_multi_cell,
+        num_cells=n,
+        overall_prediction=overall,
+        overall_risk_level=risk,
+        overall_risk_color=risk_c,
+        blast_count=n_blast,
+        normal_count=n_normal,
+        blast_percentage=round(blast_pct, 1),
+        cells=cell_results,
+        annotated_image_base64=ann_b64,
+        inference_time_ms=round(elapsed, 2),
+        segmentation_message=seg.message,
+    )
+
+
 # ── FastAPI Application ──────────────────────────────────────
 
 app = FastAPI(
@@ -437,16 +561,41 @@ async def predict_image_only(
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
-    result = run_prediction(
-        image=image,
-        age=55,
-        sex="Male",
-        npm1=False,
-        flt3=False,
-        genetic_other=False,
-    )
+    result = run_prediction(image=image)
     _save_to_db(result, image_filename=file.filename)
     return result
+
+
+@app.post("/predict/multi", response_model=MultiCellResponse)
+async def predict_multi_cell(request: PredictionRequest):
+    """
+    Smart prediction with auto-segmentation.
+
+    Accepts any image — single cell or full blood smear field.
+    If multiple cells are detected, each is cropped and analyzed
+    independently with per-cell Grad-CAM overlays.
+
+    Returns overall assessment + per-cell breakdown.
+    """
+    try:
+        image_bytes = base64.b64decode(request.image_base64)
+        image = Image.open(io.BytesIO(image_bytes))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
+
+    return run_multi_cell_prediction(image=image)
+
+
+@app.post("/predict/multi/upload", response_model=MultiCellResponse)
+async def predict_multi_cell_upload(file: UploadFile = File(...)):
+    """Multi-cell prediction via file upload."""
+    try:
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
+
+    return run_multi_cell_prediction(image=image)
 
 
 @app.post("/batch_predict", response_model=BatchPredictionResponse)

@@ -401,8 +401,8 @@ export default function Home() {
                 transition={{ duration: 0.8, delay: 0.35, ease }}
                 className="text-base sm:text-lg text-slate-300/90 max-w-xl leading-relaxed"
               >
-                Combine high-resolution peripheral blood smear imagery with clinical
-                parameters for rapid, accurate risk stratification and early detection.
+                Upload a blood smear, and the system auto-segments cells, extracts
+                morphological features, and delivers explainable blast detection in under a second.
               </motion.p>
 
               {/* Live stats row — dynamic from API */}
@@ -441,10 +441,10 @@ export default function Home() {
         </section>
 
         {/* ═══════════════════════════════════
-            STATS & QUICK ACTIONS
+            STATS & METRICS
             ═══════════════════════════════════ */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-5">
-          {/* Quick Stat: Analyses */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-5">
+          {/* Quick Stat: Dataset */}
           <FadeIn delay={0}>
             <div className="h-full p-6 rounded-xl border border-slate-800/60 shadow-card flex flex-col justify-between"
               style={{ background: 'linear-gradient(180deg, #19232e 0%, #151e29 100%)' }}>
@@ -497,39 +497,68 @@ export default function Home() {
             </div>
           </FadeIn>
 
-          {/* Stat: Performance — dynamic */}
-          <FadeIn delay={0.16} className="sm:col-span-2">
+          {/* Stat: Inference Speed */}
+          <FadeIn delay={0.16}>
             <div className="h-full p-6 rounded-xl border border-slate-800/60 shadow-card flex flex-col justify-between"
               style={{ background: 'linear-gradient(180deg, #19232e 0%, #151e29 100%)' }}>
-              <h3 className="text-sm font-medium text-slate-400 mb-4">Performance Metrics</h3>
-              <div className="flex items-end gap-3 h-32 w-full pb-2">
-                {[
-                  { label: 'Precision', value: metrics.precision, gradient: 'linear-gradient(180deg, #10b981 0%, #059669 100%)' },
-                  { label: 'Recall', value: metrics.recall, gradient: 'linear-gradient(180deg, #137fec 0%, #0e6adb 100%)' },
-                  { label: 'F1', value: metrics.f1_score, gradient: 'linear-gradient(180deg, #8b5cf6 0%, #7c3aed 100%)' },
-                  { label: 'Speed', value: Math.min(100, Math.round(100 - metrics.inference_ms / 5)), gradient: 'linear-gradient(180deg, #f59e0b 0%, #d97706 100%)' },
-                ].map((metric, i) => (
-                  <div key={metric.label} className="flex-1 flex flex-col justify-end group">
-                    <motion.div
-                      initial={{ height: 0 }}
-                      whileInView={{ height: `${metric.value}%` }}
-                      viewport={{ once: true }}
-                      transition={{ duration: 0.8, ease: 'easeOut', delay: 0.3 + i * 0.1 }}
-                      className="w-full rounded-t-md relative cursor-pointer transition-all duration-300 group-hover:brightness-125"
-                      style={{ background: metric.gradient, opacity: 0.7 }}
-                    >
-                      <div className="absolute -top-7 left-1/2 -translate-x-1/2 text-xs font-bold text-white opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap px-2 py-0.5 rounded"
-                        style={{ background: 'rgba(0,0,0,0.6)' }}>
-                        {metric.label === 'Speed' ? `<${metrics.inference_ms}ms` : `${metric.value.toFixed(1)}%`}
-                      </div>
-                    </motion.div>
-                    <p className="text-xs text-center mt-2 text-slate-500">{metric.label}</p>
-                  </div>
-                ))}
+              <div className="flex justify-between items-start">
+                <div>
+                  <p className="text-sm font-medium text-slate-400">Inference Speed</p>
+                  <h3 className="text-3xl font-bold text-white mt-1 tabular-nums">&lt;{metrics.inference_ms}ms</h3>
+                </div>
+                <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: 'rgba(245,158,11,0.1)' }}>
+                  <span className="material-icons-outlined text-xl text-amber-400">bolt</span>
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 mt-3">Per-cell classification on GPU</p>
+                <p className="text-xs text-slate-600 mt-1">ResNet-50 + MLP fusion</p>
               </div>
             </div>
           </FadeIn>
         </div>
+
+        {/* ── Performance Breakdown ─────────── */}
+        <FadeIn delay={0.2}>
+          <div className="p-6 rounded-xl border border-slate-800/60 shadow-card"
+            style={{ background: 'linear-gradient(180deg, #19232e 0%, #151e29 100%)' }}>
+            <h3 className="text-sm font-medium text-slate-400 mb-6">Performance Breakdown</h3>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 sm:gap-6">
+              {[
+                { label: 'Precision', value: metrics.precision, color: '#10b981', gradient: 'linear-gradient(135deg, #10b981, #059669)' },
+                { label: 'Recall', value: metrics.recall, color: '#137fec', gradient: 'linear-gradient(135deg, #137fec, #0e6adb)' },
+                { label: 'F1 Score', value: metrics.f1_score, color: '#8b5cf6', gradient: 'linear-gradient(135deg, #8b5cf6, #7c3aed)' },
+                { label: 'AUC-ROC', value: metrics.auc_roc * 100, color: '#f59e0b', gradient: 'linear-gradient(135deg, #f59e0b, #d97706)' },
+              ].map((metric, i) => (
+                <div key={metric.label} className="text-center space-y-3">
+                  {/* Circular progress ring */}
+                  <div className="relative w-20 h-20 mx-auto">
+                    <svg className="w-20 h-20 -rotate-90" viewBox="0 0 80 80">
+                      <circle cx="40" cy="40" r="34" fill="none" stroke="#1e2d3d" strokeWidth="5" />
+                      <motion.circle
+                        cx="40" cy="40" r="34" fill="none"
+                        stroke={metric.color}
+                        strokeWidth="5"
+                        strokeLinecap="round"
+                        strokeDasharray={`${2 * Math.PI * 34}`}
+                        initial={{ strokeDashoffset: 2 * Math.PI * 34 }}
+                        whileInView={{ strokeDashoffset: 2 * Math.PI * 34 * (1 - metric.value / 100) }}
+                        viewport={{ once: true }}
+                        transition={{ duration: 1.2, ease: 'easeOut', delay: 0.3 + i * 0.12 }}
+                      />
+                    </svg>
+                    <div className="absolute inset-0 flex items-center justify-center">
+                      <span className="text-lg font-bold text-white tabular-nums">
+                        {metric.label === 'AUC-ROC' ? metrics.auc_roc.toFixed(2) : `${metric.value.toFixed(0)}%`}
+                      </span>
+                    </div>
+                  </div>
+                  <p className="text-xs font-medium text-slate-400">{metric.label}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </FadeIn>
 
         {/* ═══════════════════════════════════
             FEATURES — with colored accents + subtle art
@@ -542,7 +571,7 @@ export default function Home() {
             {
               icon: 'hub',
               title: 'Dual-Stream Fusion',
-              body: 'ResNet-50 encodes cell morphology. A parallel MLP encodes patient demographics and genetics. Late fusion preserves each signal.',
+              body: 'ResNet-50 encodes visual features. A parallel MLP encodes 20 handcrafted morphological measurements. Late fusion preserves each signal.',
               color: '#137fec',
             },
             {
@@ -588,22 +617,22 @@ export default function Home() {
               {
                 step: '01',
                 icon: 'photo_camera',
-                title: 'Upload a cell image',
-                body: 'Peripheral blood smear or bone marrow aspirate. JPEG, PNG, or TIFF.',
+                title: 'Upload a blood slide',
+                body: 'Single-cell crop or whole blood smear field. The system auto-detects and segments individual cells.',
                 color: '#137fec',
               },
               {
                 step: '02',
-                icon: 'assignment',
-                title: 'Provide patient context',
-                body: 'Age, sex, and genetic markers — NPM1, FLT3, and others as a second input stream.',
+                icon: 'memory',
+                title: 'AI extracts & analyzes',
+                body: '20 morphological features extracted per cell — area, perimeter, texture, color — fed alongside ResNet-50 visual features.',
                 color: '#8b5cf6',
               },
               {
                 step: '03',
                 icon: 'insights',
                 title: 'Receive explained diagnosis',
-                body: 'Binary classification with confidence, risk level, and Grad-CAM heatmap overlay.',
+                body: 'Per-cell blast/normal classification with confidence score, risk level, and Grad-CAM heatmap overlay.',
                 color: '#10b981',
               },
             ].map((s, i) => (
@@ -642,8 +671,8 @@ export default function Home() {
               <div className="space-y-4">
                 {[
                   { icon: 'bolt', label: 'Inference Engine', sub: `Latency: <${metrics.inference_ms}ms`, color: '#10b981' },
-                  { icon: 'storage', label: 'Patient Database', sub: 'SQLite (WAL mode)', color: '#10b981' },
                   { icon: 'model_training', label: 'Model Version', sub: metrics.model_version, color: '#3b82f6' },
+                  { icon: 'science', label: 'Dataset', sub: `${metrics.dataset_patients}+ patients validated`, color: '#10b981' },
                 ].map((item) => (
                   <div key={item.label} className="flex items-center justify-between p-3 rounded-lg"
                     style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)' }}>
@@ -690,8 +719,8 @@ export default function Home() {
                 </div>
                 <h2 className="text-xl sm:text-2xl font-bold text-white mb-3 tracking-tight">Multimodal AI for blood diagnostics.</h2>
                 <p className="text-slate-400 text-sm max-w-lg mb-6 leading-relaxed">
-                  Dual-stream architecture fuses ResNet-50 visual features with patient
-                  genetics via late fusion. Every prediction includes Grad-CAM explanations.
+                  Dual-stream architecture fuses ResNet-50 visual features with 20
+                  handcrafted morphological measurements via late fusion. Every prediction includes Grad-CAM explanations.
                 </p>
                 <div className="flex flex-wrap items-center gap-3">
                   <Link

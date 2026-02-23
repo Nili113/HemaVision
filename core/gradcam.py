@@ -367,15 +367,19 @@ class GradCAM:
         tabular: torch.Tensor,
         original_image: Optional[np.ndarray] = None,
         save_path: Optional[str] = None,
+        ground_truth_label: Optional[int] = None,
+        threshold: float = 0.5,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float]:
         """
         Complete visualization pipeline.
 
         Args:
-            image:          Preprocessed image tensor
-            tabular:        Tabular features tensor
-            original_image: Original (non-normalized) image as numpy array
-            save_path:      Path to save the visualization
+            image:              Preprocessed image tensor
+            tabular:            Tabular features tensor
+            original_image:     Original (non-normalized) image as numpy array
+            save_path:          Path to save the visualization
+            ground_truth_label: 0 (Normal) or 1 (AML Blast) — shown in title
+            threshold:          Classification threshold for the label
 
         Returns:
             (original, heatmap_colored, overlay, prediction)
@@ -418,14 +422,18 @@ class GradCAM:
             axes[1].axis("off")
 
             axes[2].imshow(overlay)
-            pred_label = "AML Blast" if prediction > 0.5 else "Normal"
+            pred_label = "AML Blast" if prediction > threshold else "Normal"
             axes[2].set_title(
                 f"Overlay — {pred_label} ({prediction:.1%})", fontsize=12
             )
             axes[2].axis("off")
 
+            gt_str = ""
+            if ground_truth_label is not None:
+                gt_name = "AML Blast" if ground_truth_label == 1 else "Normal"
+                gt_str = f"  |  Ground Truth: {gt_name}"
             plt.suptitle(
-                "HemaVision Explainability Visualization",
+                f"HemaVision Explainability Visualization{gt_str}",
                 fontsize=14, fontweight="bold"
             )
             plt.tight_layout()

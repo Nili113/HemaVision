@@ -113,13 +113,13 @@ export default function UploadZone({ onUpload }: UploadZoneProps) {
           {
             icon: 'microscope',
             title: 'Best Results',
-            desc: 'Single-cell microscopy images at 100\u00D7 magnification',
+            desc: 'Single-cell crops or full blood smear fields — auto-segmented',
             color: '#137fec',
           },
           {
-            icon: 'image',
-            title: 'Supported Types',
-            desc: 'Peripheral blood smears, bone marrow aspirates',
+            icon: 'grid_view',
+            title: 'Multi-Cell Ready',
+            desc: 'Upload a whole slide — cells are auto-detected & analyzed individually',
             color: '#8b5cf6',
           },
           {

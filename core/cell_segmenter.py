@@ -45,8 +45,9 @@ MAX_CELLS = 30               # Don't return more than this
 CELL_CROP_PAD = 0.15         # 15% padding around each cell crop
 MIN_CELL_SIZE_PX = 32        # Minimum crop dimension in pixels
 
-# Images below this size are already single-cell crops
-SINGLE_CELL_THRESHOLD = 600  # w or h ≤ 600 → single cell
+# Very tiny images are usually already single-cell crops.
+# Keep this conservative so mid-size smear snapshots are still segmented.
+SINGLE_CELL_THRESHOLD = 256  # w or h ≤ 256 → likely single cell
 
 
 @dataclass
@@ -101,7 +102,8 @@ def segment_cells(
     w, h = image_rgb.size
     result = SegmentationResult(original_size=(w, h))
 
-    # If the image is small, treat it as a single cell
+    # Only very tiny images bypass contour segmentation.
+    # Mid-size snapshots (e.g. ~400x400) can still contain many cells.
     if w <= SINGLE_CELL_THRESHOLD and h <= SINGLE_CELL_THRESHOLD:
         result.cells = [CellCrop(
             image=image_rgb,

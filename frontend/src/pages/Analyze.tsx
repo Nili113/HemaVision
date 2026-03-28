@@ -271,7 +271,16 @@ export default function Analyze() {
 
                   {/* Single-cell: standard GradCAM viewer */}
                   {!result.is_multi_cell && (
-                    <GradCAMViewer originalImage={imagePreview} gradcamBase64={result.cells[0]?.gradcam_base64 ?? null} />
+                    <GradCAMViewer
+                      originalImage={
+                        imagePreview ||
+                        (result.cells[0]?.cell_image_base64
+                          ? `data:image/png;base64,${result.cells[0].cell_image_base64}`
+                          : null)
+                      }
+                      gradcamHeatmapBase64={result.cells[0]?.gradcam_heatmap_base64 ?? null}
+                      gradcamBase64={result.cells[0]?.gradcam_base64 ?? null}
+                    />
                   )}
 
                   {/* Reset button */}

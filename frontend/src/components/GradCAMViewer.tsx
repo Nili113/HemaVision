@@ -4,6 +4,7 @@ import clsx from 'clsx';
 
 interface GradCAMViewerProps {
   originalImage: string | null;
+  gradcamHeatmapBase64?: string | null;
   gradcamBase64: string | null;
 }
 
@@ -15,7 +16,7 @@ const views = [
 
 type ViewId = typeof views[number]['id'];
 
-export default function GradCAMViewer({ originalImage, gradcamBase64 }: GradCAMViewerProps) {
+export default function GradCAMViewer({ originalImage, gradcamHeatmapBase64, gradcamBase64 }: GradCAMViewerProps) {
   const [activeView, setActiveView] = useState<ViewId>('overlay');
 
   const getImageSrc = () => {
@@ -23,6 +24,11 @@ export default function GradCAMViewer({ originalImage, gradcamBase64 }: GradCAMV
       case 'original':
         return originalImage;
       case 'gradcam':
+        return gradcamHeatmapBase64
+          ? `data:image/png;base64,${gradcamHeatmapBase64}`
+          : gradcamBase64
+          ? `data:image/png;base64,${gradcamBase64}`
+          : originalImage;
       case 'overlay':
         return gradcamBase64 ? `data:image/png;base64,${gradcamBase64}` : originalImage;
       default:

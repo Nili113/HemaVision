@@ -45,6 +45,7 @@ MAX_CELLS = 30               # Don't return more than this
 CELL_CROP_PAD = 0.15         # 15% padding around each cell crop
 MIN_CELL_SIZE_PX = 32        # Minimum crop dimension in pixels
 MAX_BOX_IOU = 0.35           # Suppress heavily overlapping boxes
+MIN_NUCLEUS_FILL_RATIO = 0.30  # Reject thin/ring artifacts (RBC edges)
 
 # Very tiny images are usually already single-cell crops.
 # Keep this conservative so mid-size smear snapshots are still segmented.
@@ -133,7 +134,17 @@ def _extract_cell_regions_watershed(
     if max_dist <= 0.0:
         return []
 
-    sure_fg = (dist > (0.35 * max_dist)).astype(np.uint8) * 255
+    # Use local maxima as watershed seeds to better separate touching cells.
+    # This is more robust than a single global threshold for clustered nuclei.
+    dist_f = dist.astype(np.float32)
+    local_max = (dist_f == cv2.dilate(dist_f, np.ones((3, 3), np.uint8)))
+    seed_mask = local_max & (dist_f > (0.40 * max_dist))
+    sure_fg = seed_mask.astype(np.uint8) * 255
+
+    # Fallback if local-max seeds are too sparse.
+    if np.count_nonzero(sure_fg) < 8:
+        sure_fg = (dist > (0.45 * max_dist)).astype(np.uint8) * 255
+
     sure_bg = cv2.dilate(clean, kernel, iterations=2)
     unknown = cv2.subtract(sure_bg, sure_fg)
 
@@ -145,7 +156,8 @@ def _extract_cell_regions_watershed(
     markers[unknown == 255] = 0
     markers = cv2.watershed(cv2.cvtColor(small_rgb, cv2.COLOR_RGB2BGR), markers)
 
-    min_area = total_area * MIN_CELL_AREA_FRAC * 0.3
+    # Keep minima stricter to avoid tiny magenta specks/rings.
+    min_area = total_area * MIN_CELL_AREA_FRAC * 0.7
     max_area = total_area * MAX_CELL_AREA_FRAC * 0.7
 
     regions: List[Tuple[Tuple[int, int, int, int], float, np.ndarray]] = []
@@ -161,6 +173,7 @@ def _extract_cell_regions_watershed(
         w = max(1, x2 - x1 + 1)
         h = max(1, y2 - y1 + 1)
         area = float(xs.size)
+        fill_ratio = area / float(w * h)
 
         label_mask = np.zeros((sh, sw), dtype=np.uint8)
         label_mask[markers == lbl] = 255
@@ -175,6 +188,9 @@ def _extract_cell_regions_watershed(
         # Reject elongated debris and edge artifacts.
         aspect = max(w, h) / max(1, min(w, h))
         if aspect > 2.3:
+            continue
+        # Reject hollow/thin ring-like regions common in RBC artifacts.
+        if fill_ratio < MIN_NUCLEUS_FILL_RATIO:
             continue
         if w < 12 or h < 12:
             continue
@@ -297,6 +313,10 @@ def segment_cells(
             area = cv2.contourArea(c)
             if min_area < area < max_area:
                 x, y, cw, ch = cv2.boundingRect(c)
+                box_area = max(1, cw * ch)
+                fill_ratio = float(area) / float(box_area)
+                if fill_ratio < 0.22:
+                    continue
                 candidate_regions.append(((x, y, cw, ch), float(area), c))
 
     if len(candidate_regions) == 0:

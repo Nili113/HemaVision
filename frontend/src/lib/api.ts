@@ -48,6 +48,8 @@ export interface CellResult {
   risk_level: string;
   risk_color: string;
   gradcam_base64: string | null;
+  gradcam_heatmap_base64?: string | null;
+  cell_image_base64?: string | null;
 }
 
 export interface MultiCellResponse {

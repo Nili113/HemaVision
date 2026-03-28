@@ -55,6 +55,12 @@ from core.cell_segmenter import segment_cells, SegmentationResult
 from utils.config import get_config
 from utils.database import AnalysisDatabase, AnalysisRecord, UserRecord
 
+try:
+    import cv2
+    _HAS_CV2 = True
+except ImportError:
+    _HAS_CV2 = False
+
 logger = logging.getLogger(__name__)
 
 # ── Configuration ────────────────────────────────────────────
@@ -113,6 +119,8 @@ class CellResult(BaseModel):
     risk_level: str
     risk_color: str
     gradcam_base64: Optional[str] = None
+    gradcam_heatmap_base64: Optional[str] = None
+    cell_image_base64: Optional[str] = None
 
 
 class MultiCellResponse(BaseModel):
@@ -396,6 +404,12 @@ def run_multi_cell_prediction(
         cell_img = cell_crop.image.convert("RGB")
         cell_tensor = TRANSFORM(cell_img).unsqueeze(0).to(DEVICE)
 
+        # Keep a compact original cell image for frontend explainability tabs.
+        display_img = cell_img.resize((224, 224), Image.LANCZOS)
+        disp_buf = io.BytesIO()
+        display_img.save(disp_buf, format="PNG")
+        cell_image_b64 = base64.b64encode(disp_buf.getvalue()).decode("utf-8")
+
         morph_vec = extract_single_image_features(cell_img, normalize=True)
         tabular = torch.tensor(morph_vec, dtype=torch.float32).unsqueeze(0).to(DEVICE)
         if tabular.shape[1] < NUM_MODEL_TABULAR_FEATURES:
@@ -405,6 +419,7 @@ def run_multi_cell_prediction(
             tabular = tabular[:, :NUM_MODEL_TABULAR_FEATURES]
 
         gcam_b64 = None
+        gcam_heat_b64 = None
         if include_gradcam and GRADCAM_ENGINE is not None:
             heatmap, prob = GRADCAM_ENGINE.generate(cell_tensor, tabular)
             original_np = np.array(cell_img.resize((224, 224)))
@@ -412,6 +427,17 @@ def run_multi_cell_prediction(
             buf = io.BytesIO()
             Image.fromarray(overlay).save(buf, format="PNG")
             gcam_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+
+            heat_u8 = np.uint8(np.clip(heatmap, 0, 1) * 255)
+            if _HAS_CV2:
+                heat_color = cv2.applyColorMap(heat_u8, cv2.COLORMAP_JET)
+                heat_color = cv2.cvtColor(heat_color, cv2.COLOR_BGR2RGB)
+            else:
+                heat_color = np.stack([heat_u8, heat_u8, heat_u8], axis=-1)
+
+            heat_buf = io.BytesIO()
+            Image.fromarray(heat_color).save(heat_buf, format="PNG")
+            gcam_heat_b64 = base64.b64encode(heat_buf.getvalue()).decode("utf-8")
         else:
             MODEL.eval()
             with torch.no_grad():
@@ -428,6 +454,8 @@ def run_multi_cell_prediction(
             risk_level="HIGH RISK" if (is_blast and prob > 0.85) else "MODERATE RISK" if is_blast else "LOW RISK",
             risk_color="#FF3B30" if (is_blast and prob > 0.85) else "#FF9500" if is_blast else "#34C759",
             gradcam_base64=gcam_b64,
+            gradcam_heatmap_base64=gcam_heat_b64,
+            cell_image_base64=cell_image_b64,
         ))
 
     # Annotated image

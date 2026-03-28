@@ -8,7 +8,7 @@ interface UseAnalysisReturn {
   result: MultiCellResponse | null;
   isLoading: boolean;
   error: string | null;
-  analyze: (file: File, segmentationMode?: SegmentationMode) => Promise<void>;
+  analyze: (file: File, segmentationMode?: SegmentationMode, token?: string | null) => Promise<void>;
   reset: () => void;
 }
 
@@ -17,14 +17,17 @@ export function useAnalysis(): UseAnalysisReturn {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const analyze = useCallback(async (file: File, segmentationMode: SegmentationMode = 'auto') => {
+  const analyze = useCallback(async (file: File, segmentationMode: SegmentationMode = 'auto', token?: string | null) => {
     setIsLoading(true);
     setError(null);
     setResult(null);
 
     try {
       const base64 = await fileToBase64(file);
-      const response = await predictMultiCell({ image_base64: base64, segmentation_mode: segmentationMode });
+      const response = await predictMultiCell(
+        { image_base64: base64, segmentation_mode: segmentationMode },
+        token
+      );
       setResult(response);
     } catch (err) {
       let message = 'Analysis failed. Please try again.';

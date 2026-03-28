@@ -587,7 +587,7 @@ async def health_check():
 
 
 @app.post("/predict", response_model=PredictionResponse)
-async def predict_json(request: PredictionRequest):
+async def predict_json(request: PredictionRequest, user: Optional[dict] = Depends(get_current_user)):
     """
     Predict from JSON body with base64-encoded image.
 
@@ -607,13 +607,14 @@ async def predict_json(request: PredictionRequest):
         raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
     result = run_prediction(image=image)
-    _save_to_db(result)
+    _save_to_db(result, user_id=(user["id"] if user else None))
     return result
 
 
 @app.post("/predict/upload", response_model=PredictionResponse)
 async def predict_upload(
     file: UploadFile = File(...),
+    user: Optional[dict] = Depends(get_current_user),
 ):
     """Predict from multipart form upload. Only the image file is required."""
     try:
@@ -623,13 +624,14 @@ async def predict_upload(
         raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
     result = run_prediction(image=image)
-    _save_to_db(result, image_filename=file.filename)
+    _save_to_db(result, image_filename=file.filename, user_id=(user["id"] if user else None))
     return result
 
 
 @app.post("/predict/image", response_model=PredictionResponse)
 async def predict_image_only(
     file: UploadFile = File(...),
+    user: Optional[dict] = Depends(get_current_user),
 ):
     """Image-only prediction — upload a blood slide, get a diagnosis. No clinical data needed."""
     try:
@@ -639,12 +641,15 @@ async def predict_image_only(
         raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
     result = run_prediction(image=image)
-    _save_to_db(result, image_filename=file.filename)
+    _save_to_db(result, image_filename=file.filename, user_id=(user["id"] if user else None))
     return result
 
 
 @app.post("/predict/multi", response_model=MultiCellResponse)
-async def predict_multi_cell(request: MultiPredictionRequest):
+async def predict_multi_cell(
+    request: MultiPredictionRequest,
+    user: Optional[dict] = Depends(get_current_user),
+):
     """
     Smart prediction with auto-segmentation.
 
@@ -660,13 +665,16 @@ async def predict_multi_cell(request: MultiPredictionRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
-    return run_multi_cell_prediction(image=image, segmentation_mode=request.segmentation_mode)
+    result = run_multi_cell_prediction(image=image, segmentation_mode=request.segmentation_mode)
+    _save_multi_to_db(result, user_id=(user["id"] if user else None))
+    return result
 
 
 @app.post("/predict/multi/upload", response_model=MultiCellResponse)
 async def predict_multi_cell_upload(
     file: UploadFile = File(...),
     segmentation_mode: str = Form("auto"),
+    user: Optional[dict] = Depends(get_current_user),
 ):
     """Multi-cell prediction via file upload."""
     try:
@@ -676,7 +684,9 @@ async def predict_multi_cell_upload(
         raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
     mode = segmentation_mode if segmentation_mode in {"auto", "single", "multi"} else "auto"
-    return run_multi_cell_prediction(image=image, segmentation_mode=mode)
+    result = run_multi_cell_prediction(image=image, segmentation_mode=mode)
+    _save_multi_to_db(result, image_filename=file.filename, user_id=(user["id"] if user else None))
+    return result
 
 
 @app.post("/batch_predict", response_model=BatchPredictionResponse)
@@ -759,6 +769,7 @@ async def websocket_predict(websocket: WebSocket):
 def _save_to_db(
     result: PredictionResponse,
     image_filename: Optional[str] = None,
+    user_id: Optional[str] = None,
 ):
     """Persist a prediction result to the database."""
     if DB is None:
@@ -778,48 +789,89 @@ def _save_to_db(
             genetic_other=False,
             image_filename=image_filename,
             gradcam_base64=result.gradcam_base64,
+            user_id=user_id,
         )
         DB.save_analysis(record)
     except Exception as e:
         logger.error(f"Failed to save analysis to DB: {e}")
 
 
+def _save_multi_to_db(
+    result: MultiCellResponse,
+    image_filename: Optional[str] = None,
+    user_id: Optional[str] = None,
+):
+    """Persist a multi-cell prediction summary to the database."""
+    if DB is None:
+        return
+    try:
+        prob = float(result.blast_percentage / 100.0)
+        conf = max(prob, 1.0 - prob)
+        record = AnalysisRecord(
+            prediction=result.overall_prediction,
+            probability=prob,
+            confidence=conf,
+            risk_level=result.overall_risk_level,
+            risk_color=result.overall_risk_color,
+            inference_time_ms=result.inference_time_ms,
+            patient_age=0,
+            patient_sex="N/A",
+            npm1_mutated=False,
+            flt3_mutated=False,
+            genetic_other=False,
+            image_filename=image_filename,
+            gradcam_base64=result.cells[0].gradcam_base64 if result.cells else None,
+            user_id=user_id,
+        )
+        DB.save_analysis(record)
+    except Exception as e:
+        logger.error(f"Failed to save multi-cell analysis to DB: {e}")
+
+
 # ── History / Records Endpoints ──────────────────────────────
 
 @app.get("/analyses")
-async def get_analyses(limit: int = 50, offset: int = 0):
+async def get_analyses(limit: int = 50, offset: int = 0, user: Optional[dict] = Depends(get_current_user)):
     """Get analysis history, most recent first."""
     if DB is None:
         raise HTTPException(status_code=503, detail="Database not initialized")
-    records = DB.get_all_analyses(limit=limit, offset=offset)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    records = DB.get_all_analyses(limit=limit, offset=offset, user_id=user["id"])
     return {"records": records, "count": len(records), "limit": limit, "offset": offset}
 
 
 @app.get("/analyses/stats")
-async def get_analysis_stats():
+async def get_analysis_stats(user: Optional[dict] = Depends(get_current_user)):
     """Get aggregate statistics across all analyses."""
     if DB is None:
         raise HTTPException(status_code=503, detail="Database not initialized")
-    return DB.get_statistics()
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return DB.get_statistics(user_id=user["id"])
 
 
 @app.get("/analyses/{analysis_id}")
-async def get_analysis(analysis_id: str):
+async def get_analysis(analysis_id: str, user: Optional[dict] = Depends(get_current_user)):
     """Get a single analysis by ID."""
     if DB is None:
         raise HTTPException(status_code=503, detail="Database not initialized")
-    record = DB.get_analysis(analysis_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    record = DB.get_analysis(analysis_id, user_id=user["id"])
     if record is None:
         raise HTTPException(status_code=404, detail="Analysis not found")
     return record
 
 
 @app.delete("/analyses/{analysis_id}")
-async def delete_analysis(analysis_id: str):
+async def delete_analysis(analysis_id: str, user: Optional[dict] = Depends(get_current_user)):
     """Delete a single analysis."""
     if DB is None:
         raise HTTPException(status_code=503, detail="Database not initialized")
-    deleted = DB.delete_analysis(analysis_id)
+    if not user:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    deleted = DB.delete_analysis(analysis_id, user_id=user["id"])
     if not deleted:
         raise HTTPException(status_code=404, detail="Analysis not found")
     return {"deleted": True, "id": analysis_id}

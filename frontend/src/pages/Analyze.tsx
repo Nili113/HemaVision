@@ -6,6 +6,7 @@ import UploadZone from '../components/UploadZone';
 import ResultCard from '../components/ResultCard';
 import GradCAMViewer from '../components/GradCAMViewer';
 import { useAnalysis, type SegmentationMode } from '../hooks/useAnalysis';
+import { useAuth } from '../contexts/AuthContext';
 
 const stepLabels = ['Upload Image', 'Processing', 'Results'];
 
@@ -43,6 +44,7 @@ export default function Analyze() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [segmentationMode, setSegmentationMode] = useState<SegmentationMode>('auto');
   const { result, isLoading, error, analyze, reset } = useAnalysis();
+  const { token } = useAuth();
 
   const handleImageUpload = useCallback(
     async (file: File) => {
@@ -51,10 +53,10 @@ export default function Analyze() {
       const preview = await fileToPreviewUrl(file);
       setImagePreview(preview || null);
       setStep(2);
-      await analyze(file, segmentationMode);
+      await analyze(file, segmentationMode, token);
       setStep(3);
     },
-    [analyze, segmentationMode]
+    [analyze, segmentationMode, token]
   );
 
   const handleReset = useCallback(() => {

@@ -8,8 +8,10 @@ import {
   type AnalysisRecord,
   type AnalysisStats,
 } from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
 
 export default function History() {
+  const { token, isAuthenticated, loading: authLoading } = useAuth();
   const [records, setRecords] = useState<AnalysisRecord[]>([]);
   const [stats, setStats] = useState<AnalysisStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -17,12 +19,21 @@ export default function History() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
+    if (authLoading) return;
+    if (!isAuthenticated || !token) {
+      setRecords([]);
+      setStats(null);
+      setError('Sign in to view your personal analysis history.');
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     setError(null);
     try {
       const [analysesRes, statsRes] = await Promise.all([
-        getAnalyses(50, 0),
-        getAnalysisStats(),
+        getAnalyses(50, 0, token),
+        getAnalysisStats(token),
       ]);
       setRecords(analysesRes.records);
       setStats(statsRes);
@@ -31,7 +42,7 @@ export default function History() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [authLoading, isAuthenticated, token]);
 
   useEffect(() => {
     fetchData();
@@ -39,9 +50,9 @@ export default function History() {
 
   const handleDelete = async (id: string) => {
     try {
-      await deleteAnalysis(id);
+      await deleteAnalysis(id, token);
       setRecords((prev) => prev.filter((r) => r.id !== id));
-      const statsRes = await getAnalysisStats();
+      const statsRes = await getAnalysisStats(token);
       setStats(statsRes);
     } catch {
       // Silently fail

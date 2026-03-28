@@ -103,8 +103,13 @@ export async function predict(request: PredictionRequest): Promise<PredictionRes
   return data;
 }
 
-export async function predictMultiCell(request: PredictionRequest): Promise<MultiCellResponse> {
-  const { data } = await api.post<MultiCellResponse>('/predict/multi', request);
+export async function predictMultiCell(
+  request: PredictionRequest,
+  token?: string | null
+): Promise<MultiCellResponse> {
+  const { data } = await api.post<MultiCellResponse>('/predict/multi', request, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
   return data;
 }
 
@@ -163,20 +168,29 @@ export interface AnalysisStats {
   risk_distribution: Record<string, number>;
 }
 
-export async function getAnalyses(limit = 50, offset = 0): Promise<AnalysesResponse> {
+export async function getAnalyses(
+  limit = 50,
+  offset = 0,
+  token?: string | null
+): Promise<AnalysesResponse> {
   const { data } = await api.get<AnalysesResponse>('/analyses', {
     params: { limit, offset },
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   });
   return data;
 }
 
-export async function getAnalysisStats(): Promise<AnalysisStats> {
-  const { data } = await api.get<AnalysisStats>('/analyses/stats');
+export async function getAnalysisStats(token?: string | null): Promise<AnalysisStats> {
+  const { data } = await api.get<AnalysisStats>('/analyses/stats', {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
   return data;
 }
 
-export async function deleteAnalysis(id: string): Promise<void> {
-  await api.delete(`/analyses/${id}`);
+export async function deleteAnalysis(id: string, token?: string | null): Promise<void> {
+  await api.delete(`/analyses/${id}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
 }
 
 // ── Auth ─────────────────────────────────────────────────────

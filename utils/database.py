@@ -46,6 +46,7 @@ class AnalysisRecord:
         genetic_other: bool,
         image_filename: Optional[str] = None,
         gradcam_base64: Optional[str] = None,
+        user_id: Optional[str] = None,
         id: Optional[str] = None,
         created_at: Optional[str] = None,
     ):
@@ -63,6 +64,7 @@ class AnalysisRecord:
         self.genetic_other = genetic_other
         self.image_filename = image_filename
         self.gradcam_base64 = gradcam_base64
+        self.user_id = user_id
         self.created_at = created_at or datetime.now().isoformat()
 
     def to_dict(self) -> dict[str, Any]:
@@ -81,6 +83,7 @@ class AnalysisRecord:
             "genetic_other": self.genetic_other,
             "image_filename": self.image_filename,
             "gradcam_base64": self.gradcam_base64,
+            "user_id": self.user_id,
             "created_at": self.created_at,
         }
 
@@ -171,9 +174,14 @@ class AnalysisDatabase:
                     genetic_other   INTEGER NOT NULL DEFAULT 0,
                     image_filename  TEXT,
                     gradcam_base64  TEXT,
+                    user_id         TEXT,
                     created_at      TEXT NOT NULL
                 )
             """)
+            # Lightweight migration for pre-user_id databases.
+            columns = [row["name"] for row in conn.execute("PRAGMA table_info(analyses)").fetchall()]
+            if "user_id" not in columns:
+                conn.execute("ALTER TABLE analyses ADD COLUMN user_id TEXT")
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_analyses_created
                 ON analyses(created_at DESC)
@@ -181,6 +189,10 @@ class AnalysisDatabase:
             conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_analyses_risk
                 ON analyses(risk_level)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_analyses_user_created
+                ON analyses(user_id, created_at DESC)
             """)
             conn.commit()
             logger.info(f"Database initialized at {self.db_path}")
@@ -197,8 +209,8 @@ class AnalysisDatabase:
                     id, prediction, probability, confidence, risk_level,
                     risk_color, inference_time_ms, patient_age, patient_sex,
                     npm1_mutated, flt3_mutated, genetic_other,
-                    image_filename, gradcam_base64, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    image_filename, gradcam_base64, user_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.id,
@@ -215,6 +227,7 @@ class AnalysisDatabase:
                     int(record.genetic_other),
                     record.image_filename,
                     record.gradcam_base64,
+                    record.user_id,
                     record.created_at,
                 ),
             )
@@ -224,13 +237,19 @@ class AnalysisDatabase:
         finally:
             conn.close()
 
-    def get_analysis(self, analysis_id: str) -> Optional[dict[str, Any]]:
+    def get_analysis(self, analysis_id: str, user_id: Optional[str] = None) -> Optional[dict[str, Any]]:
         """Get a single analysis by ID."""
         conn = self._get_connection()
         try:
-            row = conn.execute(
-                "SELECT * FROM analyses WHERE id = ?", (analysis_id,)
-            ).fetchone()
+            if user_id is None:
+                row = conn.execute(
+                    "SELECT * FROM analyses WHERE id = ?", (analysis_id,)
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT * FROM analyses WHERE id = ? AND user_id = ?",
+                    (analysis_id, user_id),
+                ).fetchone()
             if row is None:
                 return None
             return self._row_to_dict(row)
@@ -238,24 +257,33 @@ class AnalysisDatabase:
             conn.close()
 
     def get_all_analyses(
-        self, limit: int = 50, offset: int = 0
+        self, limit: int = 50, offset: int = 0, user_id: Optional[str] = None
     ) -> list[dict[str, Any]]:
         """Get all analyses, most recent first."""
         conn = self._get_connection()
         try:
-            rows = conn.execute(
-                "SELECT * FROM analyses ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                (limit, offset),
-            ).fetchall()
+            if user_id is None:
+                rows = conn.execute(
+                    "SELECT * FROM analyses ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                    (limit, offset),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM analyses WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                    (user_id, limit, offset),
+                ).fetchall()
             return [self._row_to_dict(row) for row in rows]
         finally:
             conn.close()
 
-    def get_statistics(self) -> dict[str, Any]:
+    def get_statistics(self, user_id: Optional[str] = None) -> dict[str, Any]:
         """Get aggregate statistics across all analyses."""
         conn = self._get_connection()
         try:
-            total = conn.execute("SELECT COUNT(*) FROM analyses").fetchone()[0]
+            where = " WHERE user_id = ?" if user_id is not None else ""
+            params: tuple[Any, ...] = (user_id,) if user_id is not None else tuple()
+
+            total = conn.execute(f"SELECT COUNT(*) FROM analyses{where}", params).fetchone()[0]
             if total == 0:
                 return {
                     "total_analyses": 0,
@@ -266,21 +294,36 @@ class AnalysisDatabase:
                     "risk_distribution": {},
                 }
 
-            aml = conn.execute(
-                "SELECT COUNT(*) FROM analyses WHERE prediction LIKE '%AML%'"
-            ).fetchone()[0]
-
-            avg_conf = conn.execute(
-                "SELECT AVG(confidence) FROM analyses"
-            ).fetchone()[0]
-
-            avg_time = conn.execute(
-                "SELECT AVG(inference_time_ms) FROM analyses"
-            ).fetchone()[0]
-
-            risk_rows = conn.execute(
-                "SELECT risk_level, COUNT(*) as cnt FROM analyses GROUP BY risk_level"
-            ).fetchall()
+            if user_id is None:
+                aml = conn.execute(
+                    "SELECT COUNT(*) FROM analyses WHERE prediction LIKE '%AML%'"
+                ).fetchone()[0]
+                avg_conf = conn.execute(
+                    "SELECT AVG(confidence) FROM analyses"
+                ).fetchone()[0]
+                avg_time = conn.execute(
+                    "SELECT AVG(inference_time_ms) FROM analyses"
+                ).fetchone()[0]
+                risk_rows = conn.execute(
+                    "SELECT risk_level, COUNT(*) as cnt FROM analyses GROUP BY risk_level"
+                ).fetchall()
+            else:
+                aml = conn.execute(
+                    "SELECT COUNT(*) FROM analyses WHERE user_id = ? AND prediction LIKE '%AML%'",
+                    (user_id,),
+                ).fetchone()[0]
+                avg_conf = conn.execute(
+                    "SELECT AVG(confidence) FROM analyses WHERE user_id = ?",
+                    (user_id,),
+                ).fetchone()[0]
+                avg_time = conn.execute(
+                    "SELECT AVG(inference_time_ms) FROM analyses WHERE user_id = ?",
+                    (user_id,),
+                ).fetchone()[0]
+                risk_rows = conn.execute(
+                    "SELECT risk_level, COUNT(*) as cnt FROM analyses WHERE user_id = ? GROUP BY risk_level",
+                    (user_id,),
+                ).fetchall()
             risk_dist = {row["risk_level"]: row["cnt"] for row in risk_rows}
 
             return {
@@ -294,13 +337,18 @@ class AnalysisDatabase:
         finally:
             conn.close()
 
-    def delete_analysis(self, analysis_id: str) -> bool:
+    def delete_analysis(self, analysis_id: str, user_id: Optional[str] = None) -> bool:
         """Delete an analysis by ID. Returns True if deleted."""
         conn = self._get_connection()
         try:
-            cursor = conn.execute(
-                "DELETE FROM analyses WHERE id = ?", (analysis_id,)
-            )
+            if user_id is None:
+                cursor = conn.execute(
+                    "DELETE FROM analyses WHERE id = ?", (analysis_id,)
+                )
+            else:
+                cursor = conn.execute(
+                    "DELETE FROM analyses WHERE id = ? AND user_id = ?", (analysis_id, user_id)
+                )
             conn.commit()
             return cursor.rowcount > 0
         finally:

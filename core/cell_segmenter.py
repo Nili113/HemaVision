@@ -41,7 +41,7 @@ except ImportError:
 # Expressed as a fraction of the total image area.
 MIN_CELL_AREA_FRAC = 0.002   # Cell must be > 0.2% of image
 MAX_CELL_AREA_FRAC = 0.25    # Cell must be < 25% of image
-MAX_CELLS = 30               # Don't return more than this
+MAX_CELLS = 80               # Upper safety cap for very dense fields
 CELL_CROP_PAD = 0.15         # 15% padding around each cell crop
 MIN_CELL_SIZE_PX = 32        # Minimum crop dimension in pixels
 MAX_BOX_IOU = 0.35           # Suppress heavily overlapping boxes
@@ -492,7 +492,9 @@ def segment_cells(
         if substantial_count == 1 and dominant_frac >= 0.02 and center_dist <= 0.55:
             keep_idx = [dominant_idx]
 
+    num_kept_before_cap = len(keep_idx)
     keep_idx = keep_idx[:max_cells]
+    capped = num_kept_before_cap > max_cells
 
     # Sort retained boxes by top-left position for stable display order.
     keep_idx.sort(key=lambda i: (pre_boxes[i][1], pre_boxes[i][0]))
@@ -570,6 +572,8 @@ def segment_cells(
 
     if result.is_multi_cell:
         result.message = f"Detected {n} cells in the blood smear — analyzing each individually."
+        if capped:
+            result.message += f" (showing top {max_cells} detections; more were found)"
     else:
         result.message = f"Single cell detected — analyzing directly."
 

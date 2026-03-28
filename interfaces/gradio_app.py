@@ -175,7 +175,10 @@ def predict(
     image_pil = image.convert("RGB") if isinstance(image, Image.Image) else Image.fromarray(image).convert("RGB")
 
     # ── Auto-segment ─────────────────────────────────────────
-    seg = segment_cells(image_pil, max_cells=20, annotate=True)
+    w, h = image_pil.size
+    area_mp = (w * h) / 1_000_000.0
+    dynamic_max_cells = int(np.clip(round(20 + 35 * area_mp), 12, 80))
+    seg = segment_cells(image_pil, max_cells=dynamic_max_cells, annotate=True)
     cells = seg.cells
     n_cells = len(cells)
 

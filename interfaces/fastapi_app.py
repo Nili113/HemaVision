@@ -396,7 +396,10 @@ def run_multi_cell_prediction(
 
     start = time.perf_counter()
 
-    seg = segment_cells(image, max_cells=20, annotate=True)
+    w, h = image.size
+    area_mp = (w * h) / 1_000_000.0
+    dynamic_max_cells = int(np.clip(round(20 + 35 * area_mp), 12, 80))
+    seg = segment_cells(image, max_cells=dynamic_max_cells, annotate=True)
     cells = seg.cells
 
     cell_results: List[CellResult] = []

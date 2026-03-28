@@ -2,6 +2,26 @@
 
 ## Local Development
 
+### One Command (Recommended)
+
+```bash
+./scripts/bootstrap.sh
+```
+
+This installs dependencies and starts both backend and frontend.
+
+After startup:
+- Frontend: http://localhost:5173
+- Backend: http://localhost:8000
+- Swagger: http://localhost:8000/docs
+
+Optional helpers:
+
+```bash
+./scripts/stop_all.sh
+./scripts/status_all.sh
+```
+
 ### Backend (FastAPI)
 
 ```bash

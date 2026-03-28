@@ -196,7 +196,7 @@ VITE_GOOGLE_CLIENT_ID={{please-get-this-from-google-cloud}}
 
 ## Running the Application
 
-The system has three independent components. Run the backend first, then the frontend.
+Use one command and the full app will install and start automatically.
 
 ### One-Command Startup (Recommended)
 
@@ -210,14 +210,18 @@ This command:
 - Ensures checkpoint folders exist and syncs root `.pt` files into `outputs/checkpoints/`
 - Starts backend on port `8000` and frontend on port `5173`
 
+Open after startup:
+- Frontend: `http://localhost:5173`
+- Backend API docs: `http://localhost:8000/docs`
+
 Additional service scripts:
 
 ```bash
-./scripts/install_all.sh   # install only
-./scripts/start_all.sh     # start backend + frontend
-./scripts/status_all.sh    # check process status
-./scripts/stop_all.sh      # stop both services
+./scripts/stop_all.sh      # stop everything
+./scripts/status_all.sh    # check if services are running
 ```
+
+Manual backend/frontend startup commands are optional and only needed if you do not want the one-command flow.
 
 ### Backend (FastAPI)
 

@@ -46,6 +46,9 @@ CELL_CROP_PAD = 0.15         # 15% padding around each cell crop
 MIN_CELL_SIZE_PX = 32        # Minimum crop dimension in pixels
 MAX_BOX_IOU = 0.35           # Suppress heavily overlapping boxes
 MIN_NUCLEUS_FILL_RATIO = 0.30  # Reject thin/ring artifacts (RBC edges)
+DOMINANT_CELL_MIN_AREA_FRAC = 0.06  # Largest nucleus should occupy >= 6% of frame
+DOMINANT_CELL_RATIO_MIN = 2.2        # Largest nucleus should be much bigger than #2
+DOMINANT_CELL_CENTER_MAX_DIST = 0.42 # Relative center distance from image center
 
 # Very tiny images are usually already single-cell crops.
 # Keep this conservative so mid-size smear snapshots are still segmented.
@@ -103,6 +106,88 @@ def _color_for_index(i: int) -> Tuple[int, int, int]:
     return palette[i % len(palette)]
 
 
+def _build_nucleus_mask(small_rgb: np.ndarray) -> np.ndarray:
+    """Build a robust nucleus-like mask in HSV space."""
+    hsv = cv2.cvtColor(small_rgb, cv2.COLOR_RGB2HSV)
+    mask1 = cv2.inRange(hsv, (115, 45, 35), (145, 255, 255))
+    mask2 = cv2.inRange(hsv, (145, 35, 25), (179, 255, 255))
+    mask = cv2.bitwise_or(mask1, mask2)
+
+    sh, sw = small_rgb.shape[:2]
+    k = max(3, int(round(min(sh, sw) / 140)))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel, iterations=2)
+    return mask
+
+
+def _detect_single_dominant_cell(
+    small_rgb: np.ndarray,
+) -> Optional[Tuple[Tuple[int, int, int, int], np.ndarray]]:
+    """
+    Detect whether image is a single-cell close-up with one dominant nucleus.
+
+    Returns:
+        ((x, y, w, h), contour) in resized image coordinates if detected,
+        otherwise None.
+    """
+    mask = _build_nucleus_mask(small_rgb)
+    sh, sw = small_rgb.shape[:2]
+    total_area = float(sh * sw)
+
+    n, labels, stats, centroids = cv2.connectedComponentsWithStats(mask)
+    if n <= 1:
+        return None
+
+    comps = []
+    for i in range(1, n):
+        area = float(stats[i, cv2.CC_STAT_AREA])
+        if area < total_area * 0.003:
+            continue
+        x = int(stats[i, cv2.CC_STAT_LEFT])
+        y = int(stats[i, cv2.CC_STAT_TOP])
+        w = int(stats[i, cv2.CC_STAT_WIDTH])
+        h = int(stats[i, cv2.CC_STAT_HEIGHT])
+        comps.append((i, area, x, y, w, h, centroids[i]))
+
+    if not comps:
+        return None
+
+    comps.sort(key=lambda t: t[1], reverse=True)
+    i0, a0, x, y, w, h, c0 = comps[0]
+    a1 = comps[1][1] if len(comps) > 1 else 0.0
+
+    area_frac = a0 / total_area
+    ratio = a0 / max(a1, 1.0)
+    cx, cy = float(c0[0]), float(c0[1])
+    center_dist = np.hypot(cx - (sw / 2), cy - (sh / 2)) / max(1.0, np.hypot(sw / 2, sh / 2))
+
+    if area_frac < DOMINANT_CELL_MIN_AREA_FRAC:
+        return None
+    if ratio < DOMINANT_CELL_RATIO_MIN:
+        return None
+    if center_dist > DOMINANT_CELL_CENTER_MAX_DIST:
+        return None
+
+    component_mask = np.zeros((sh, sw), dtype=np.uint8)
+    component_mask[labels == i0] = 255
+    contours, _ = cv2.findContours(component_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+
+    contour = max(contours, key=cv2.contourArea)
+
+    # Expand bbox around the nucleus so crop includes cytoplasm context.
+    side = max(w, h)
+    pad = int(side * 0.45)
+    bx = max(0, x - pad)
+    by = max(0, y - pad)
+    bw = min(sw - bx, w + 2 * pad)
+    bh = min(sh - by, h + 2 * pad)
+
+    return (bx, by, bw, bh), contour
+
+
 def _extract_cell_regions_watershed(
     small_rgb: np.ndarray,
 ) -> List[Tuple[Tuple[int, int, int, int], float, np.ndarray]]:
@@ -112,12 +197,7 @@ def _extract_cell_regions_watershed(
     Returns:
         List of ((x, y, w, h), area, contour) in resized image coordinates.
     """
-    hsv = cv2.cvtColor(small_rgb, cv2.COLOR_RGB2HSV)
-
-    # Purple/magenta nuclei mask. Two adjacent ranges improve robustness.
-    mask1 = cv2.inRange(hsv, (115, 45, 35), (145, 255, 255))
-    mask2 = cv2.inRange(hsv, (145, 35, 25), (179, 255, 255))
-    mask = cv2.bitwise_or(mask1, mask2)
+    mask = _build_nucleus_mask(small_rgb)
 
     sh, sw = small_rgb.shape[:2]
     total_area = sh * sw
@@ -287,8 +367,14 @@ def segment_cells(
     else:
         small = img_np.copy()
 
-    # 1) Preferred path: watershed split on nucleus-like color mask.
-    candidate_regions = _extract_cell_regions_watershed(small)
+    # Special case: single-cell close-up with one dominant nucleus.
+    dominant = _detect_single_dominant_cell(small)
+    if dominant is not None:
+        (x, y, cw, ch), contour = dominant
+        candidate_regions = [((x, y, cw, ch), float(cw * ch), contour)]
+    else:
+        # 1) Preferred path: watershed split on nucleus-like color mask.
+        candidate_regions = _extract_cell_regions_watershed(small)
 
     # 2) Fallback path: contouring if watershed yields nothing.
     if len(candidate_regions) == 0:
@@ -446,6 +532,13 @@ def segment_cells(
     result.annotated_image = Image.fromarray(annotated) if annotated is not None else None
 
     n = len(cells)
+    if dominant is not None and n == 1:
+        result.message = "Dominant single cell detected — analyzing one cell crop."
+        result.is_multi_cell = False
+        result.annotated_image = Image.fromarray(annotated) if annotated is not None else None
+        logger.info(f"Segmented {n} cells from {w}×{h} image (dominant-cell mode)")
+        return result
+
     if result.is_multi_cell:
         result.message = f"Detected {n} cells in the blood smear — analyzing each individually."
     else:

@@ -471,6 +471,27 @@ def segment_cells(
         pre_contours.append(contour_scaled.astype(np.int32))
 
     keep_idx = _nms_boxes(pre_boxes, pre_scores, iou_thr=MAX_BOX_IOU)
+
+    # Close-up safety guard: if exactly one substantial nucleus exists and
+    # other detections are tiny fragments, force single-cell mode.
+    if keep_idx:
+        sh, sw = small.shape[:2]
+        img_area_small = float(sh * sw)
+        areas = [pre_scores[i] for i in keep_idx]
+        max_pos = int(np.argmax(areas))
+        dominant_idx = keep_idx[max_pos]
+        dominant_area = areas[max_pos]
+        dominant_frac = dominant_area / max(1.0, img_area_small)
+
+        substantial_count = sum(1 for a in areas if a >= 0.28 * dominant_area)
+        cx1, cy1, cx2, cy2 = pre_boxes[dominant_idx]
+        dcx = (cx1 + cx2) / 2.0
+        dcy = (cy1 + cy2) / 2.0
+        center_dist = np.hypot(dcx - (w / 2.0), dcy - (h / 2.0)) / max(1.0, np.hypot(w / 2.0, h / 2.0))
+
+        if substantial_count == 1 and dominant_frac >= 0.02 and center_dist <= 0.55:
+            keep_idx = [dominant_idx]
+
     keep_idx = keep_idx[:max_cells]
 
     # Sort retained boxes by top-left position for stable display order.

@@ -5,7 +5,7 @@ import clsx from 'clsx';
 import UploadZone from '../components/UploadZone';
 import ResultCard from '../components/ResultCard';
 import GradCAMViewer from '../components/GradCAMViewer';
-import { useAnalysis } from '../hooks/useAnalysis';
+import { useAnalysis, type SegmentationMode } from '../hooks/useAnalysis';
 
 const stepLabels = ['Upload Image', 'Processing', 'Results'];
 
@@ -41,6 +41,7 @@ export default function Analyze() {
   const [step, setStep] = useState(1);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [segmentationMode, setSegmentationMode] = useState<SegmentationMode>('auto');
   const { result, isLoading, error, analyze, reset } = useAnalysis();
 
   const handleImageUpload = useCallback(
@@ -50,10 +51,10 @@ export default function Analyze() {
       const preview = await fileToPreviewUrl(file);
       setImagePreview(preview || null);
       setStep(2);
-      await analyze(file);
+      await analyze(file, segmentationMode);
       setStep(3);
     },
-    [analyze]
+    [analyze, segmentationMode]
   );
 
   const handleReset = useCallback(() => {
@@ -84,6 +85,31 @@ export default function Analyze() {
             </div>
 
             <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1 p-1 rounded-xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                {(['auto', 'single', 'multi'] as SegmentationMode[]).map((mode) => {
+                  const active = segmentationMode === mode;
+                  return (
+                    <button
+                      key={mode}
+                      onClick={() => setSegmentationMode(mode)}
+                      className={clsx(
+                        'px-2.5 py-1.5 rounded-lg text-[11px] font-semibold uppercase tracking-wider transition-all',
+                        active ? 'bg-primary/20 text-primary border border-primary/30' : 'text-slate-500 hover:text-slate-300 border border-transparent'
+                      )}
+                      title={
+                        mode === 'auto'
+                          ? 'Auto choose single or multi segmentation'
+                          : mode === 'single'
+                          ? 'Force one dominant cell crop'
+                          : 'Force multi-cell segmentation'
+                      }
+                    >
+                      {mode}
+                    </button>
+                  );
+                })}
+              </div>
+
               {/* Stepper */}
               <div className="flex items-center gap-0.5 p-1 rounded-xl" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}>
                 {stepLabels.map((label, idx) => {
@@ -162,6 +188,12 @@ export default function Analyze() {
                       'bg-amber-500/10 text-amber-400 border border-amber-500/20'
                     )}>
                       {result.blast_count === 0 ? 'Normal' : result.overall_risk_level === 'HIGH RISK' ? 'AML Detected' : 'Atypical'}
+                    </div>
+                  )}
+                  {result && (
+                    <div className="text-[11px] text-slate-500 font-medium">
+                      Mode: <span className="text-slate-300 uppercase">{result.segmentation_mode_used}</span> · Analyzed {result.num_cells}
+                      {result.estimated_total_cells > result.num_cells ? ` / Est. ${result.estimated_total_cells}` : ''}
                     </div>
                   )}
                 </div>

@@ -97,7 +97,10 @@ export default function ResultCard({ result }: ResultCardProps) {
           {result.is_multi_cell && (
             <div className="flex items-center gap-2 text-xs text-primary/80 font-medium py-3 border-b border-slate-800/60 mb-5">
               <span className="material-icons-outlined text-sm">grid_view</span>
-              {result.num_cells} cells segmented — {result.blast_count} blast, {result.normal_count} normal
+              {result.num_cells} cells analyzed
+              {result.estimated_total_cells > result.num_cells ? ` (estimated ${result.estimated_total_cells} total)` : ''}
+              {' — '}
+              {result.blast_count} blast, {result.normal_count} normal
             </div>
           )}
 

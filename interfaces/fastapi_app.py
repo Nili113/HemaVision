@@ -37,7 +37,7 @@ from typing import List, Optional
 import numpy as np
 import torch
 from PIL import Image
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, Depends, Header
+from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, Depends, Header, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -98,6 +98,14 @@ class PredictionRequest(BaseModel):
     image_base64: str = Field(..., description="Base64-encoded cell image")
 
 
+class MultiPredictionRequest(PredictionRequest):
+    segmentation_mode: str = Field(
+        default="auto",
+        pattern="^(auto|single|multi)$",
+        description="Segmentation mode: auto, single, or multi",
+    )
+
+
 class PredictionResponse(BaseModel):
     """Prediction result."""
     prediction: str
@@ -127,6 +135,8 @@ class MultiCellResponse(BaseModel):
     """Response when a multi-cell image is auto-segmented."""
     is_multi_cell: bool
     num_cells: int
+    estimated_total_cells: int
+    segmentation_mode_used: str
     overall_prediction: str
     overall_risk_level: str
     overall_risk_color: str
@@ -388,6 +398,7 @@ def run_prediction(
 def run_multi_cell_prediction(
     image: Image.Image,
     include_gradcam: bool = True,
+    segmentation_mode: str = "auto",
 ) -> MultiCellResponse:
     """Segment a multi-cell image and predict each cell."""
     global MODEL, GRADCAM_ENGINE
@@ -399,7 +410,12 @@ def run_multi_cell_prediction(
     w, h = image.size
     area_mp = (w * h) / 1_000_000.0
     dynamic_max_cells = int(np.clip(round(20 + 35 * area_mp), 12, 80))
-    seg = segment_cells(image, max_cells=dynamic_max_cells, annotate=True)
+    seg = segment_cells(
+        image,
+        max_cells=dynamic_max_cells,
+        annotate=True,
+        segmentation_mode=segmentation_mode,
+    )
     cells = seg.cells
 
     cell_results: List[CellResult] = []
@@ -491,6 +507,8 @@ def run_multi_cell_prediction(
     return MultiCellResponse(
         is_multi_cell=seg.is_multi_cell,
         num_cells=n,
+        estimated_total_cells=max(seg.estimated_total_cells, n),
+        segmentation_mode_used=seg.segmentation_mode_used,
         overall_prediction=overall,
         overall_risk_level=risk,
         overall_risk_color=risk_c,
@@ -626,7 +644,7 @@ async def predict_image_only(
 
 
 @app.post("/predict/multi", response_model=MultiCellResponse)
-async def predict_multi_cell(request: PredictionRequest):
+async def predict_multi_cell(request: MultiPredictionRequest):
     """
     Smart prediction with auto-segmentation.
 
@@ -642,11 +660,14 @@ async def predict_multi_cell(request: PredictionRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
-    return run_multi_cell_prediction(image=image)
+    return run_multi_cell_prediction(image=image, segmentation_mode=request.segmentation_mode)
 
 
 @app.post("/predict/multi/upload", response_model=MultiCellResponse)
-async def predict_multi_cell_upload(file: UploadFile = File(...)):
+async def predict_multi_cell_upload(
+    file: UploadFile = File(...),
+    segmentation_mode: str = Form("auto"),
+):
     """Multi-cell prediction via file upload."""
     try:
         contents = await file.read()
@@ -654,7 +675,8 @@ async def predict_multi_cell_upload(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
-    return run_multi_cell_prediction(image=image)
+    mode = segmentation_mode if segmentation_mode in {"auto", "single", "multi"} else "auto"
+    return run_multi_cell_prediction(image=image, segmentation_mode=mode)
 
 
 @app.post("/batch_predict", response_model=BatchPredictionResponse)

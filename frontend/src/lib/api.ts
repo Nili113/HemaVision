@@ -23,6 +23,7 @@ const api = axios.create({
 
 export interface PredictionRequest {
   image_base64: string;
+  segmentation_mode?: 'auto' | 'single' | 'multi';
 }
 
 export interface PredictionResponse {
@@ -55,6 +56,8 @@ export interface CellResult {
 export interface MultiCellResponse {
   is_multi_cell: boolean;
   num_cells: number;
+  estimated_total_cells: number;
+  segmentation_mode_used: 'auto' | 'single' | 'multi' | string;
   overall_prediction: string;
   overall_risk_level: string;
   overall_risk_color: string;

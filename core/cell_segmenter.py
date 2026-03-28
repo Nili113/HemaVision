@@ -305,6 +305,8 @@ class SegmentationResult:
     is_multi_cell: bool = False
     original_size: Tuple[int, int] = (0, 0)   # (w, h)
     annotated_image: Optional[Image.Image] = None  # Original with bboxes drawn
+    estimated_total_cells: int = 0
+    segmentation_mode_used: str = "auto"
     message: str = ""
 
 
@@ -324,6 +326,7 @@ def segment_cells(
     image: Image.Image,
     max_cells: int = MAX_CELLS,
     annotate: bool = True,
+    segmentation_mode: str = "auto",
 ) -> SegmentationResult:
     """
     Segment individual cells from a microscopy image.
@@ -336,9 +339,12 @@ def segment_cells(
     Returns:
         SegmentationResult with list of CellCrop objects
     """
+    if segmentation_mode not in {"auto", "single", "multi"}:
+        segmentation_mode = "auto"
+
     image_rgb = image.convert("RGB")
     w, h = image_rgb.size
-    result = SegmentationResult(original_size=(w, h))
+    result = SegmentationResult(original_size=(w, h), segmentation_mode_used=segmentation_mode)
 
     # Only very tiny images bypass contour segmentation.
     # Mid-size snapshots (e.g. ~400x400) can still contain many cells.
@@ -351,6 +357,7 @@ def segment_cells(
             index=0,
         )]
         result.is_multi_cell = False
+        result.estimated_total_cells = 1
         result.message = "Single-cell image detected — analyzing directly."
         return result
 
@@ -363,6 +370,7 @@ def segment_cells(
             center=(w // 2, h // 2),
             index=0,
         )]
+        result.estimated_total_cells = 1
         result.message = "OpenCV not available — analyzing whole image as single cell."
         return result
 
@@ -376,7 +384,7 @@ def segment_cells(
         small = img_np.copy()
 
     # Special case: single-cell close-up with one dominant nucleus.
-    dominant = _detect_single_dominant_cell(small)
+    dominant = _detect_single_dominant_cell(small) if segmentation_mode != "multi" else None
     if dominant is not None:
         (x, y, cw, ch), contour = dominant
         candidate_regions = [((x, y, cw, ch), float(cw * ch), contour)]
@@ -422,6 +430,7 @@ def segment_cells(
             center=(w // 2, h // 2),
             index=0,
         )]
+        result.estimated_total_cells = 1
         result.message = "No individual cells detected — analyzing whole image."
         return result
 
@@ -474,7 +483,7 @@ def segment_cells(
 
     # Close-up safety guard: if exactly one substantial nucleus exists and
     # other detections are tiny fragments, force single-cell mode.
-    if keep_idx:
+    if keep_idx and segmentation_mode == "auto":
         sh, sw = small.shape[:2]
         img_area_small = float(sh * sw)
         areas = [pre_scores[i] for i in keep_idx]
@@ -492,9 +501,14 @@ def segment_cells(
         if substantial_count == 1 and dominant_frac >= 0.02 and center_dist <= 0.55:
             keep_idx = [dominant_idx]
 
+    if keep_idx and segmentation_mode == "single":
+        dominant_idx = keep_idx[int(np.argmax([pre_scores[i] for i in keep_idx]))]
+        keep_idx = [dominant_idx]
+
     num_kept_before_cap = len(keep_idx)
     keep_idx = keep_idx[:max_cells]
     capped = num_kept_before_cap > max_cells
+    result.estimated_total_cells = max(1, num_kept_before_cap)
 
     # Sort retained boxes by top-left position for stable display order.
     keep_idx.sort(key=lambda i: (pre_boxes[i][1], pre_boxes[i][0]))
@@ -564,18 +578,21 @@ def segment_cells(
 
     n = len(cells)
     if dominant is not None and n == 1:
-        result.message = "Dominant single cell detected — analyzing one cell crop."
+        mode_prefix = "[single] " if segmentation_mode == "single" else ""
+        result.message = f"{mode_prefix}Dominant single cell detected — analyzing one cell crop."
         result.is_multi_cell = False
         result.annotated_image = Image.fromarray(annotated) if annotated is not None else None
         logger.info(f"Segmented {n} cells from {w}×{h} image (dominant-cell mode)")
         return result
 
     if result.is_multi_cell:
-        result.message = f"Detected {n} cells in the blood smear — analyzing each individually."
+        mode_prefix = "[multi] " if segmentation_mode == "multi" else ""
+        result.message = f"{mode_prefix}Detected {n} cells in the blood smear — analyzing each individually."
         if capped:
             result.message += f" (showing top {max_cells} detections; more were found)"
     else:
-        result.message = f"Single cell detected — analyzing directly."
+        mode_prefix = "[single] " if segmentation_mode == "single" else ""
+        result.message = f"{mode_prefix}Single cell detected — analyzing directly."
 
     logger.info(f"Segmented {n} cells from {w}×{h} image")
     return result

@@ -68,6 +68,20 @@ def _threshold_cam(cam: np.ndarray, threshold: float = 0.15) -> np.ndarray:
     return cam
 
 
+def _suppress_border(cam: np.ndarray, border_frac: float = 0.08) -> np.ndarray:
+    """Dampen border activations that often appear as resize/corner artifacts."""
+    h, w = cam.shape
+    by = max(1, int(h * border_frac))
+    bx = max(1, int(w * border_frac))
+
+    mask = np.ones_like(cam, dtype=np.float32)
+    mask[:by, :] = 0.35
+    mask[-by:, :] = 0.35
+    mask[:, :bx] = 0.35
+    mask[:, -bx:] = 0.35
+    return cam * mask
+
+
 # ── Multi-layer hook manager ────────────────────────────────
 
 
@@ -289,6 +303,11 @@ class GradCAM:
 
         # 2. Percentile-based normalization
         cam = _normalize_cam(cam, percentile_clip=99.0)
+
+        # 2.5. Suppress common border artifacts
+        cam = _suppress_border(cam, border_frac=0.08)
+        if cam.max() > 0:
+            cam = cam / cam.max()
 
         # 3. Noise thresholding
         if self.noise_threshold > 0:

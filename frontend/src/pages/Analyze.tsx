@@ -273,10 +273,9 @@ export default function Analyze() {
                   {!result.is_multi_cell && (
                     <GradCAMViewer
                       originalImage={
-                        imagePreview ||
                         (result.cells[0]?.cell_image_base64
                           ? `data:image/png;base64,${result.cells[0].cell_image_base64}`
-                          : null)
+                          : imagePreview)
                       }
                       gradcamHeatmapBase64={result.cells[0]?.gradcam_heatmap_base64 ?? null}
                       gradcamBase64={result.cells[0]?.gradcam_base64 ?? null}

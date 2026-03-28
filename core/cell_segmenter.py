@@ -49,6 +49,8 @@ MIN_NUCLEUS_FILL_RATIO = 0.30  # Reject thin/ring artifacts (RBC edges)
 DOMINANT_CELL_MIN_AREA_FRAC = 0.06  # Largest nucleus should occupy >= 6% of frame
 DOMINANT_CELL_RATIO_MIN = 2.2        # Largest nucleus should be much bigger than #2
 DOMINANT_CELL_CENTER_MAX_DIST = 0.42 # Relative center distance from image center
+DOMINANT_CELL_MAX_COMPONENTS = 5      # Too many nucleus blobs => likely multi-cell field
+DOMINANT_CELL_MIN_SHARE = 0.55        # Largest nucleus should dominate total nucleus area
 
 # Very tiny images are usually already single-cell crops.
 # Keep this conservative so mid-size smear snapshots are still segmented.
@@ -156,15 +158,21 @@ def _detect_single_dominant_cell(
     comps.sort(key=lambda t: t[1], reverse=True)
     i0, a0, x, y, w, h, c0 = comps[0]
     a1 = comps[1][1] if len(comps) > 1 else 0.0
+    total_nucleus_area = float(sum(c[1] for c in comps))
 
     area_frac = a0 / total_area
     ratio = a0 / max(a1, 1.0)
+    share = a0 / max(total_nucleus_area, 1.0)
     cx, cy = float(c0[0]), float(c0[1])
     center_dist = np.hypot(cx - (sw / 2), cy - (sh / 2)) / max(1.0, np.hypot(sw / 2, sh / 2))
 
+    if len(comps) > DOMINANT_CELL_MAX_COMPONENTS:
+        return None
     if area_frac < DOMINANT_CELL_MIN_AREA_FRAC:
         return None
     if ratio < DOMINANT_CELL_RATIO_MIN:
+        return None
+    if share < DOMINANT_CELL_MIN_SHARE:
         return None
     if center_dist > DOMINANT_CELL_CENTER_MAX_DIST:
         return None

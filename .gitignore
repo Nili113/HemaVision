@@ -48,5 +48,6 @@ frontend/node_modules/
 
 # Logs
 *.log
+.runlogs/
 
 CLAUDE.md

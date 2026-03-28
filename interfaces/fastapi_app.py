@@ -27,6 +27,7 @@ import hashlib
 import hmac
 import json
 import logging
+import os
 import secrets
 import time
 from datetime import datetime
@@ -273,6 +274,34 @@ def load_model(checkpoint_path: Optional[str] = None):
     logger.info(f"Model loaded on {DEVICE}")
 
 
+def _resolve_checkpoint_path() -> Optional[str]:
+    """Resolve checkpoint path from env override, then common locations."""
+    project_root = Path(__file__).resolve().parent.parent
+
+    env_path = os.getenv("MODEL_PATH")
+    if env_path:
+        env_candidate = Path(env_path)
+        if env_candidate.exists():
+            logger.info(f"Using checkpoint from MODEL_PATH: {env_candidate}")
+            return str(env_candidate)
+        logger.warning(f"MODEL_PATH is set but file does not exist: {env_candidate}")
+
+    candidates = [
+        CONFIG.paths.checkpoints_dir / "best_model.pt",
+        CONFIG.paths.checkpoints_dir / "final_model.pt",
+        project_root / "best_model.pt",
+        project_root / "final_model.pt",
+    ]
+
+    for candidate in candidates:
+        if candidate.exists():
+            logger.info(f"Auto-discovered checkpoint: {candidate}")
+            return str(candidate)
+
+    logger.info("No checkpoint found in expected locations; running in demo mode.")
+    return None
+
+
 # ── Prediction Logic ─────────────────────────────────────────
 
 def run_prediction(
@@ -473,8 +502,7 @@ app.add_middleware(
 async def startup_event():
     """Load model and database on server start."""
     global DB
-    ckpt = CONFIG.paths.checkpoints_dir / "best_model.pt"
-    load_model(str(ckpt) if ckpt.exists() else None)
+    load_model(_resolve_checkpoint_path())
     DB = AnalysisDatabase()
     logger.info("Database initialized")
 

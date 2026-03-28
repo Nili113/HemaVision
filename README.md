@@ -198,6 +198,27 @@ VITE_GOOGLE_CLIENT_ID={{please-get-this-from-google-cloud}}
 
 The system has three independent components. Run the backend first, then the frontend.
 
+### One-Command Startup (Recommended)
+
+```bash
+./scripts/bootstrap.sh
+```
+
+This command:
+- Installs backend dependencies (`pip install -r requirements.txt`)
+- Installs frontend dependencies (`frontend/npm install`)
+- Ensures checkpoint folders exist and syncs root `.pt` files into `outputs/checkpoints/`
+- Starts backend on port `8000` and frontend on port `5173`
+
+Additional service scripts:
+
+```bash
+./scripts/install_all.sh   # install only
+./scripts/start_all.sh     # start backend + frontend
+./scripts/status_all.sh    # check process status
+./scripts/stop_all.sh      # stop both services
+```
+
 ### Backend (FastAPI)
 
 ```bash

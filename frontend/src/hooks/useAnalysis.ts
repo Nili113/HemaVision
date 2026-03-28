@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react';
+import axios from 'axios';
 import { predictMultiCell, fileToBase64, type MultiCellResponse } from '../lib/api';
 
 interface UseAnalysisReturn {
@@ -24,7 +25,18 @@ export function useAnalysis(): UseAnalysisReturn {
       const response = await predictMultiCell({ image_base64: base64 });
       setResult(response);
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Analysis failed. Please try again.';
+      let message = 'Analysis failed. Please try again.';
+
+      if (axios.isAxiosError(err)) {
+        if (!err.response) {
+          message = 'Backend is not running. Start FastAPI on port 8000 and try again.';
+        } else {
+          message = err.response.data?.detail || err.message || message;
+        }
+      } else if (err instanceof Error) {
+        message = err.message;
+      }
+
       setError(message);
     } finally {
       setIsLoading(false);

@@ -15,6 +15,7 @@ Author: Firoj
 import io
 import base64
 import logging
+import os
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -49,16 +50,37 @@ OPTIMAL_THRESHOLD: float = 0.5  # Updated when checkpoint is loaded
 TABULAR_FEATURE_NAMES = list(MORPHOLOGY_FEATURE_NAMES)  # 20 features
 
 
+def _resolve_checkpoint_path(checkpoint_path: Optional[str] = None) -> Optional[str]:
+    """Resolve checkpoint path from explicit arg, env override, then common locations."""
+    if checkpoint_path and Path(checkpoint_path).exists():
+        return checkpoint_path
+
+    env_path = os.getenv("MODEL_PATH")
+    if env_path and Path(env_path).exists():
+        logger.info(f"Using checkpoint from MODEL_PATH: {env_path}")
+        return env_path
+
+    project_root = Path(__file__).resolve().parent.parent
+    candidates = [
+        CONFIG.paths.checkpoints_dir / "best_model.pt",
+        CONFIG.paths.checkpoints_dir / "final_model.pt",
+        project_root / "best_model.pt",
+        project_root / "final_model.pt",
+    ]
+
+    for candidate in candidates:
+        if candidate.exists():
+            logger.info(f"Auto-discovered checkpoint: {candidate}")
+            return str(candidate)
+
+    return None
+
+
 def load_model(checkpoint_path: Optional[str] = None) -> DualStreamFusionModel:
     """Load the trained model or create a fresh one for demo."""
     global MODEL, GRADCAM, OPTIMAL_THRESHOLD
 
-    # Auto-discover checkpoint if none provided
-    if not checkpoint_path:
-        default_ckpt = CONFIG.paths.checkpoints_dir / "best_model.pt"
-        if default_ckpt.exists():
-            checkpoint_path = str(default_ckpt)
-            logger.info(f"Auto-discovered checkpoint: {checkpoint_path}")
+    checkpoint_path = _resolve_checkpoint_path(checkpoint_path)
 
     if checkpoint_path and Path(checkpoint_path).exists():
         # Peek at checkpoint for optimal threshold

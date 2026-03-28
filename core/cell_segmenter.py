@@ -44,10 +44,144 @@ MAX_CELL_AREA_FRAC = 0.25    # Cell must be < 25% of image
 MAX_CELLS = 30               # Don't return more than this
 CELL_CROP_PAD = 0.15         # 15% padding around each cell crop
 MIN_CELL_SIZE_PX = 32        # Minimum crop dimension in pixels
+MAX_BOX_IOU = 0.35           # Suppress heavily overlapping boxes
 
 # Very tiny images are usually already single-cell crops.
 # Keep this conservative so mid-size smear snapshots are still segmented.
 SINGLE_CELL_THRESHOLD = 256  # w or h ≤ 256 → likely single cell
+
+
+def _box_iou(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> float:
+    """Compute IoU for two boxes in (x1, y1, x2, y2) format."""
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0, ix2 - ix1), max(0, iy2 - iy1)
+    inter = iw * ih
+    if inter == 0:
+        return 0.0
+
+    a_area = max(1, (ax2 - ax1) * (ay2 - ay1))
+    b_area = max(1, (bx2 - bx1) * (by2 - by1))
+    return inter / float(a_area + b_area - inter)
+
+
+def _nms_boxes(
+    boxes: List[Tuple[int, int, int, int]],
+    scores: List[float],
+    iou_thr: float = MAX_BOX_IOU,
+) -> List[int]:
+    """Simple NMS returning kept indices in descending score order."""
+    if not boxes:
+        return []
+
+    order = sorted(range(len(boxes)), key=lambda i: scores[i], reverse=True)
+    keep: List[int] = []
+
+    for idx in order:
+        candidate = boxes[idx]
+        if all(_box_iou(candidate, boxes[k]) < iou_thr for k in keep):
+            keep.append(idx)
+    return keep
+
+
+def _color_for_index(i: int) -> Tuple[int, int, int]:
+    """Stable, high-contrast color palette for overlay labels/contours."""
+    palette = [
+        (59, 130, 246),   # blue
+        (16, 185, 129),   # emerald
+        (245, 158, 11),   # amber
+        (236, 72, 153),   # pink
+        (139, 92, 246),   # violet
+        (14, 165, 233),   # sky
+        (234, 88, 12),    # orange
+        (132, 204, 22),   # lime
+    ]
+    return palette[i % len(palette)]
+
+
+def _extract_cell_regions_watershed(
+    small_rgb: np.ndarray,
+) -> List[Tuple[Tuple[int, int, int, int], float, np.ndarray]]:
+    """
+    Segment likely WBC nuclei with HSV color mask + watershed.
+
+    Returns:
+        List of ((x, y, w, h), area, contour) in resized image coordinates.
+    """
+    hsv = cv2.cvtColor(small_rgb, cv2.COLOR_RGB2HSV)
+
+    # Purple/magenta nuclei mask. Two adjacent ranges improve robustness.
+    mask1 = cv2.inRange(hsv, (115, 45, 35), (145, 255, 255))
+    mask2 = cv2.inRange(hsv, (145, 35, 25), (179, 255, 255))
+    mask = cv2.bitwise_or(mask1, mask2)
+
+    sh, sw = small_rgb.shape[:2]
+    total_area = sh * sw
+
+    # Clean tiny noise while preserving nucleus cores.
+    k = max(3, int(round(min(sh, sw) / 140)))
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    clean = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel, iterations=1)
+    clean = cv2.morphologyEx(clean, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+    # Sure foreground from distance peaks to split touching nuclei.
+    dist = cv2.distanceTransform(clean, cv2.DIST_L2, 5)
+    max_dist = float(dist.max())
+    if max_dist <= 0.0:
+        return []
+
+    sure_fg = (dist > (0.35 * max_dist)).astype(np.uint8) * 255
+    sure_bg = cv2.dilate(clean, kernel, iterations=2)
+    unknown = cv2.subtract(sure_bg, sure_fg)
+
+    n_markers, markers = cv2.connectedComponents(sure_fg)
+    if n_markers <= 1:
+        return []
+
+    markers = markers + 1
+    markers[unknown == 255] = 0
+    markers = cv2.watershed(cv2.cvtColor(small_rgb, cv2.COLOR_RGB2BGR), markers)
+
+    min_area = total_area * MIN_CELL_AREA_FRAC * 0.3
+    max_area = total_area * MAX_CELL_AREA_FRAC * 0.7
+
+    regions: List[Tuple[Tuple[int, int, int, int], float, np.ndarray]] = []
+    for lbl in np.unique(markers):
+        if lbl <= 1:
+            continue
+        ys, xs = np.where(markers == lbl)
+        if xs.size == 0:
+            continue
+
+        x1, x2 = int(xs.min()), int(xs.max())
+        y1, y2 = int(ys.min()), int(ys.max())
+        w = max(1, x2 - x1 + 1)
+        h = max(1, y2 - y1 + 1)
+        area = float(xs.size)
+
+        label_mask = np.zeros((sh, sw), dtype=np.uint8)
+        label_mask[markers == lbl] = 255
+        contours, _ = cv2.findContours(label_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not contours:
+            continue
+        contour = max(contours, key=cv2.contourArea)
+
+        # Reject tiny specks and very large merged regions.
+        if not (min_area <= area <= max_area):
+            continue
+        # Reject elongated debris and edge artifacts.
+        aspect = max(w, h) / max(1, min(w, h))
+        if aspect > 2.3:
+            continue
+        if w < 12 or h < 12:
+            continue
+
+        regions.append(((x1, y1, w, h), area, contour))
+
+    return regions
 
 
 @dataclass
@@ -128,7 +262,7 @@ def segment_cells(
         result.message = "OpenCV not available — analyzing whole image as single cell."
         return result
 
-    # ── Convert and threshold ────────────────────────────────
+    # ── Build candidate regions ───────────────────────────────
     img_np = np.array(image_rgb)
     # Work at reduced resolution for speed, keep original for cropping
     scale = min(1.0, 1024.0 / max(w, h))
@@ -137,39 +271,35 @@ def segment_cells(
     else:
         small = img_np.copy()
 
-    gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
+    # 1) Preferred path: watershed split on nucleus-like color mask.
+    candidate_regions = _extract_cell_regions_watershed(small)
 
-    # Adaptive threshold works better than Otsu for stained smears
-    # that have uneven illumination
-    blur = cv2.GaussianBlur(gray, (11, 11), 0)
-    _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    # 2) Fallback path: contouring if watershed yields nothing.
+    if len(candidate_regions) == 0:
+        gray = cv2.cvtColor(small, cv2.COLOR_RGB2GRAY)
+        blur = cv2.GaussianBlur(gray, (11, 11), 0)
+        _, binary = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    # ── Morphological cleanup ────────────────────────────────
-    kernel_size = max(3, int(7 * scale))
-    if kernel_size % 2 == 0:
-        kernel_size += 1
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
+        kernel_size = max(3, int(7 * scale))
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kernel_size, kernel_size))
+        binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel, iterations=2)
+        binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel, iterations=1)
 
-    # ── Find contours ────────────────────────────────────────
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        sh, sw = small.shape[:2]
+        total_area = sh * sw
+        min_area = total_area * MIN_CELL_AREA_FRAC
+        max_area = total_area * MAX_CELL_AREA_FRAC
 
-    sh, sw = small.shape[:2]
-    total_area = sh * sw
-    min_area = total_area * MIN_CELL_AREA_FRAC
-    max_area = total_area * MAX_CELL_AREA_FRAC
+        for c in contours:
+            area = cv2.contourArea(c)
+            if min_area < area < max_area:
+                x, y, cw, ch = cv2.boundingRect(c)
+                candidate_regions.append(((x, y, cw, ch), float(area), c))
 
-    # Filter and sort by area (largest first)
-    valid_contours = []
-    for c in contours:
-        area = cv2.contourArea(c)
-        if min_area < area < max_area:
-            valid_contours.append((c, area))
-    valid_contours.sort(key=lambda x: x[1], reverse=True)
-    valid_contours = valid_contours[:max_cells]
-
-    if len(valid_contours) == 0:
+    if len(candidate_regions) == 0:
         # No cells found — return whole image
         result.cells = [CellCrop(
             image=image_rgb,
@@ -185,8 +315,12 @@ def segment_cells(
     annotated = img_np.copy() if annotate else None
     cells: List[CellCrop] = []
 
-    for idx, (contour, area) in enumerate(valid_contours):
-        x, y, cw, ch = cv2.boundingRect(contour)
+    pre_boxes: List[Tuple[int, int, int, int]] = []
+    pre_scores: List[float] = []
+    pre_areas: List[float] = []
+    pre_contours: List[np.ndarray] = []
+
+    for (x, y, cw, ch), area, contour in candidate_regions:
 
         # Scale bounding box back to original resolution
         inv_scale = 1.0 / scale
@@ -211,26 +345,81 @@ def segment_cells(
         if (x2 - x1) < MIN_CELL_SIZE_PX or (y2 - y1) < MIN_CELL_SIZE_PX:
             continue
 
+        pre_boxes.append((x1, y1, x2, y2))
+        pre_scores.append(float(area))
+        pre_areas.append(float(area * inv_scale * inv_scale))
+
+        contour_scaled = contour.astype(np.float32).copy()
+        contour_scaled[:, 0, 0] *= inv_scale
+        contour_scaled[:, 0, 1] *= inv_scale
+        contour_scaled[:, 0, 0] = np.clip(contour_scaled[:, 0, 0], 0, w - 1)
+        contour_scaled[:, 0, 1] = np.clip(contour_scaled[:, 0, 1], 0, h - 1)
+        pre_contours.append(contour_scaled.astype(np.int32))
+
+    keep_idx = _nms_boxes(pre_boxes, pre_scores, iou_thr=MAX_BOX_IOU)
+    keep_idx = keep_idx[:max_cells]
+
+    # Sort retained boxes by top-left position for stable display order.
+    keep_idx.sort(key=lambda i: (pre_boxes[i][1], pre_boxes[i][0]))
+
+    for out_idx, i in enumerate(keep_idx):
+        x1, y1, x2, y2 = pre_boxes[i]
+        area_scaled = pre_areas[i]
+
         crop = image_rgb.crop((x1, y1, x2, y2))
         cells.append(CellCrop(
             image=crop,
             bbox=(x1, y1, x2, y2),
-            area=float(area * inv_scale * inv_scale),
-            center=(cx, cy),
-            index=idx,
+            area=area_scaled,
+            center=((x1 + x2) // 2, (y1 + y2) // 2),
+            index=out_idx,
         ))
 
         # Draw on annotated image
-        if annotated is not None:
-            color = (59, 130, 246)  # Blue
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 3)
-            label = f"#{idx + 1}"
-            font_scale = max(0.6, min(1.5, side / 300))
-            thickness = max(1, int(font_scale * 2))
+    if annotated is not None and len(keep_idx) > 0:
+        overlay = annotated.copy()
+
+        # Fill segmentation regions with light transparency.
+        for out_idx, i in enumerate(keep_idx):
+            contour = pre_contours[i]
+            color = _color_for_index(out_idx)
+            cv2.drawContours(overlay, [contour], -1, color, thickness=-1)
+
+        annotated = cv2.addWeighted(overlay, 0.24, annotated, 0.76, 0)
+
+        # Draw crisp contour edges and compact labels.
+        for out_idx, i in enumerate(keep_idx):
+            contour = pre_contours[i]
+            color = _color_for_index(out_idx)
+            cv2.drawContours(annotated, [contour], -1, color, thickness=2)
+
+            m = cv2.moments(contour)
+            if m["m00"] > 0:
+                cx = int(m["m10"] / m["m00"])
+                cy = int(m["m01"] / m["m00"])
+            else:
+                x1, y1, x2, y2 = pre_boxes[i]
+                cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+
+            label = f"{out_idx + 1}"
+            font_scale = 0.65
+            thickness = 2
             (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, font_scale, thickness)
-            cv2.rectangle(annotated, (x1, y1 - th - 10), (x1 + tw + 10, y1), color, -1)
-            cv2.putText(annotated, label, (x1 + 5, y1 - 5),
-                        cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness)
+            lx1 = max(0, cx - tw // 2 - 6)
+            ly1 = max(0, cy - th - 10)
+            lx2 = min(w - 1, lx1 + tw + 12)
+            ly2 = min(h - 1, ly1 + th + 10)
+            cv2.rectangle(annotated, (lx1, ly1), (lx2, ly2), color, -1)
+            cv2.putText(
+                annotated,
+                label,
+                (lx1 + 6, ly2 - 7),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                font_scale,
+                (255, 255, 255),
+                thickness,
+                lineType=cv2.LINE_AA,
+            )
 
     result.cells = cells
     result.is_multi_cell = len(cells) > 1

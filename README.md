@@ -205,6 +205,7 @@ Use one command and the full app will install and start automatically.
 ```
 
 This command:
+- Creates and uses a local Python virtual environment at `.venv`
 - Installs backend dependencies (`pip install -r requirements.txt`)
 - Installs frontend dependencies (`frontend/npm install`)
 - Ensures checkpoint folders exist and syncs root `.pt` files into `outputs/checkpoints/`

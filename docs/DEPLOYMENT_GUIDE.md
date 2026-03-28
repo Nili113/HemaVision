@@ -9,6 +9,7 @@
 ```
 
 This installs dependencies and starts both backend and frontend.
+Python dependencies are installed inside `.venv` automatically.
 
 After startup:
 - Frontend: http://localhost:5173

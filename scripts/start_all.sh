@@ -73,7 +73,7 @@ else
   else
   echo "Starting frontend on port $FRONTEND_PORT..."
   cd "$ROOT_DIR/frontend"
-  nohup npm run dev -- --host 0.0.0.0 --port "$FRONTEND_PORT" > "$LOG_DIR/frontend.log" 2>&1 &
+  nohup npm run dev -- --host 0.0.0.0 --strictPort --port "$FRONTEND_PORT" > "$LOG_DIR/frontend.log" 2>&1 &
   echo $! > "$FRONTEND_PID_FILE"
   fi
 fi
@@ -93,6 +93,21 @@ done
 if [[ "$backend_ready" != "true" ]]; then
   echo "Backend failed to become healthy on port $BACKEND_PORT."
   echo "Check log: $LOG_DIR/backend.log"
+  exit 1
+fi
+
+frontend_ready=false
+for _ in {1..20}; do
+  if curl -s "http://localhost:${FRONTEND_PORT}" >/dev/null 2>&1; then
+    frontend_ready=true
+    break
+  fi
+  sleep 1
+done
+
+if [[ "$frontend_ready" != "true" ]]; then
+  echo "Frontend failed to become ready on port $FRONTEND_PORT."
+  echo "Check log: $LOG_DIR/frontend.log"
   exit 1
 fi
 

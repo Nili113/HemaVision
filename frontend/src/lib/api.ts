@@ -2,7 +2,16 @@ import axios from 'axios';
 
 // In dev (Codespaces), use the Vite proxy at /api which forwards to FastAPI.
 // In production, set VITE_API_URL to the actual backend URL.
-const API_URL = import.meta.env.VITE_API_URL || '/api';
+const configuredApiUrl = import.meta.env.VITE_API_URL as string | undefined;
+const isBrowserLocalhost =
+  typeof window !== 'undefined' &&
+  ['localhost', '127.0.0.1'].includes(window.location.hostname);
+
+const API_URL = import.meta.env.DEV
+  ? isBrowserLocalhost && configuredApiUrl
+    ? configuredApiUrl
+    : '/api'
+  : configuredApiUrl || '/api';
 
 const api = axios.create({
   baseURL: API_URL,

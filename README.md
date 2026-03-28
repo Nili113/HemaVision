@@ -188,9 +188,11 @@ cp frontend/.env.example frontend/.env
 Edit `frontend/.env` if your backend runs on a different host or port:
 
 ```
-VITE_API_URL=http://localhost:8000
+VITE_API_URL=/api
 VITE_GOOGLE_CLIENT_ID={{please-get-this-from-google-cloud}}
 ```
+
+Note: `/api` is recommended for development because Vite proxies it to FastAPI.
 
 ---
 

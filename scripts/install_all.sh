@@ -20,6 +20,13 @@ echo "[3/5] Installing frontend dependencies..."
 cd "$ROOT_DIR/frontend"
 npm install
 
+# Ensure dev API base uses Vite proxy by default.
+if [[ ! -f "$ROOT_DIR/frontend/.env" ]]; then
+  printf 'VITE_API_URL=/api\n' > "$ROOT_DIR/frontend/.env"
+elif grep -q '^VITE_API_URL=http://localhost:8000$' "$ROOT_DIR/frontend/.env"; then
+  sed -i 's|^VITE_API_URL=http://localhost:8000$|VITE_API_URL=/api|' "$ROOT_DIR/frontend/.env"
+fi
+
 cd "$ROOT_DIR"
 echo "[4/5] Preparing runtime directories..."
 mkdir -p outputs/checkpoints data .runlogs

@@ -61,7 +61,7 @@ export default function GradCAMViewer({ originalImage, gradcamHeatmapBase64, gra
                 key={view.id}
                 onClick={() => setActiveView(view.id)}
                 className={clsx(
-                  'flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all duration-200',
+                  'flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition ease-out-custom duration-200',
                   isActive
                     ? 'bg-primary text-white shadow-md'
                     : 'text-slate-500 hover:text-slate-300'

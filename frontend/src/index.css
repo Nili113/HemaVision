@@ -1,3 +1,11 @@
+@layer base {
+  :root {
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+    --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+  }
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -26,7 +34,7 @@
   /* ── Buttons ─────────────────────────────── */
   .btn-primary {
     @apply px-6 py-3 text-white rounded-lg font-semibold text-sm
-           active:scale-[0.98] transition-all duration-200;
+           active:scale-[0.98] transition-[background-color,border-color,color,box-shadow,transform] duration-200 ease-[var(--ease-out)];
     background-color: #137fec;
     box-shadow: 0 0 20px rgba(19, 127, 236, 0.15);
   }
@@ -37,7 +45,7 @@
 
   .btn-secondary {
     @apply px-6 py-3 text-slate-200 rounded-lg font-semibold text-sm
-           transition-all duration-200;
+           transition-[background-color,border-color,color,box-shadow,transform] duration-200 ease-[var(--ease-out)];
     background-color: #19232e;
     border: 1px solid rgba(255, 255, 255, 0.08);
   }
@@ -48,7 +56,7 @@
 
   .btn-ghost {
     @apply px-4 py-2.5 text-slate-400 rounded-lg text-sm font-medium
-           transition-all duration-200;
+           transition-[background-color,border-color,color,box-shadow,transform] duration-200 ease-[var(--ease-out)];
   }
   .btn-ghost:hover {
     color: #fff;
@@ -64,7 +72,7 @@
   }
 
   .card-hover {
-    @apply card transition-all duration-300;
+    @apply card transition-[background-color,border-color,color,box-shadow,transform] duration-300 ease-[var(--ease-out)];
   }
   .card-hover:hover {
     border-color: rgba(19, 127, 236, 0.3);
@@ -80,7 +88,7 @@
   }
 
   .btn-glass {
-    @apply text-white rounded-lg transition-all duration-300;
+    @apply text-white rounded-lg transition-[background-color,border-color,color,box-shadow,transform] duration-300 ease-[var(--ease-out)];
     background: rgba(255, 255, 255, 0.06);
     backdrop-filter: blur(12px);
     -webkit-backdrop-filter: blur(12px);
@@ -122,7 +130,7 @@
   /* ── Inputs ──────────────────────────────── */
   .input-field {
     @apply w-full px-3 py-2.5 rounded-lg text-sm text-white placeholder-slate-500
-           outline-none transition-all duration-200;
+           outline-none transition-[background-color,border-color,color,box-shadow,transform] duration-200 ease-[var(--ease-out)];
     background: rgba(30, 45, 61, 0.5);
     border: 1px solid rgba(255, 255, 255, 0.08);
   }

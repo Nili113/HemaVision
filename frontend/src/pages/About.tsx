@@ -6,7 +6,7 @@ function FadeIn({ children, delay = 0, className = '' }: { children: React.React
   return (
     <motion.div
       initial={{ opacity: 0, y: 18 }}
-      whileInView={{ opacity: 1, y: 0 }}
+      whileInView={{ opacity: 1, y: 0, scale: 1 }}
       viewport={{ once: true, margin: '-40px' }}
       transition={{ duration: 0.65, delay, ease }}
       className={className}
@@ -21,7 +21,7 @@ function PipelineNode({ label, sub, icon, accent = '#137fec', highlight = false 
   label: string; sub: string; icon: string; accent?: string; highlight?: boolean;
 }) {
   return (
-    <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition-all ${
+    <div className={`flex items-center gap-3 px-4 py-3 rounded-xl border transition ease-out-custom ${
       highlight ? 'border-opacity-40' : 'border-slate-700/50'
     }`}
       style={{
@@ -206,7 +206,7 @@ export default function About() {
               },
             ].map((item, i) => (
               <FadeIn key={item.num} delay={i * 0.05}>
-                <div className="p-5 rounded-xl border border-slate-800/60 h-full transition-all duration-200 hover:border-slate-700"
+                <div className="p-5 rounded-xl border border-slate-800/60 h-full transition ease-out-custom duration-200 hover:border-slate-700"
                   style={{ background: 'linear-gradient(180deg, #19232e 0%, #151e29 100%)' }}>
                   <div className="flex items-center gap-3 mb-3">
                     <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
@@ -247,7 +247,7 @@ export default function About() {
               { name: 'TypeScript', role: 'Language', icon: 'data_object', color: '#3b82f6' },
             ].map((tech, i) => (
               <FadeIn key={tech.name} delay={i * 0.03}>
-                <div className="py-4 px-4 rounded-xl border border-slate-800/60 text-center hover:border-slate-700 transition-colors"
+                <div className="py-4 px-4 rounded-xl border border-slate-800/60 text-center hover:border-slate-700 transition-colors ease-out-custom ease-out-custom"
                   style={{ background: 'linear-gradient(180deg, #19232e 0%, #151e29 100%)' }}>
                   <span className="material-icons-outlined text-xl mb-1.5 block" style={{ color: tech.color }}>{tech.icon}</span>
                   <div className="text-sm font-semibold text-white">{tech.name}</div>
@@ -276,11 +276,11 @@ export default function About() {
               href="https://www.cancerimagingarchive.net/"
               target="_blank"
               rel="noopener noreferrer"
-              className="group inline-flex items-center gap-1.5 text-sm text-primary font-medium transition-colors"
+              className="group inline-flex items-center gap-1.5 text-sm text-primary font-medium transition-colors ease-out-custom ease-out-custom"
             >
               <span className="relative">
                 View on TCIA
-                <span className="absolute bottom-0 left-0 w-0 h-px bg-primary transition-all duration-300 ease-out group-hover:w-full" />
+                <span className="absolute bottom-0 left-0 w-0 h-px bg-primary transition ease-out-custom duration-300 ease-out group-hover:w-full" />
               </span>
               <span className="material-icons-outlined transition-transform duration-200 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" style={{ fontSize: '14px' }}>arrow_outward</span>
             </a>

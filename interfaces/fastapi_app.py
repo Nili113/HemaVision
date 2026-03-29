@@ -84,6 +84,33 @@ GRADCAM_ENGINE: Optional[GradCAM] = None
 DB: Optional[AnalysisDatabase] = None
 
 
+def _load_local_env() -> None:
+    """Lightweight .env loader for local runs without extra dependencies."""
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if not env_path.exists():
+        return
+
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            raw = line.strip()
+            if not raw or raw.startswith("#") or "=" not in raw:
+                continue
+            key, value = raw.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except Exception as e:
+        logger.warning(f"Failed to load .env file: {e}")
+
+
+def _encode_image_to_png_base64(image: Image.Image) -> str:
+    """Encode a PIL image to PNG base64 for persistent preview storage."""
+    buf = io.BytesIO()
+    image.convert("RGB").save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
 # ── Pydantic Models ──────────────────────────────────────────
 
 class HealthResponse(BaseModel):
@@ -551,6 +578,7 @@ app.add_middleware(
 async def startup_event():
     """Load model and database on server start."""
     global DB
+    _load_local_env()
     load_model(_resolve_checkpoint_path())
     DB = AnalysisDatabase()
     logger.info("Database initialized")
@@ -607,7 +635,11 @@ async def predict_json(request: PredictionRequest, user: Optional[dict] = Depend
         raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
     result = run_prediction(image=image)
-    _save_to_db(result, user_id=(user["id"] if user else None))
+    _save_to_db(
+        result,
+        user_id=(user["id"] if user else None),
+        source_image_base64=_encode_image_to_png_base64(image),
+    )
     return result
 
 
@@ -624,7 +656,12 @@ async def predict_upload(
         raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
     result = run_prediction(image=image)
-    _save_to_db(result, image_filename=file.filename, user_id=(user["id"] if user else None))
+    _save_to_db(
+        result,
+        image_filename=file.filename,
+        user_id=(user["id"] if user else None),
+        source_image_base64=_encode_image_to_png_base64(image),
+    )
     return result
 
 
@@ -641,7 +678,12 @@ async def predict_image_only(
         raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
     result = run_prediction(image=image)
-    _save_to_db(result, image_filename=file.filename, user_id=(user["id"] if user else None))
+    _save_to_db(
+        result,
+        image_filename=file.filename,
+        user_id=(user["id"] if user else None),
+        source_image_base64=_encode_image_to_png_base64(image),
+    )
     return result
 
 
@@ -666,7 +708,11 @@ async def predict_multi_cell(
         raise HTTPException(status_code=400, detail=f"Invalid image: {str(e)}")
 
     result = run_multi_cell_prediction(image=image, segmentation_mode=request.segmentation_mode)
-    _save_multi_to_db(result, user_id=(user["id"] if user else None))
+    _save_multi_to_db(
+        result,
+        user_id=(user["id"] if user else None),
+        source_image_base64=_encode_image_to_png_base64(image),
+    )
     return result
 
 
@@ -685,7 +731,12 @@ async def predict_multi_cell_upload(
 
     mode = segmentation_mode if segmentation_mode in {"auto", "single", "multi"} else "auto"
     result = run_multi_cell_prediction(image=image, segmentation_mode=mode)
-    _save_multi_to_db(result, image_filename=file.filename, user_id=(user["id"] if user else None))
+    _save_multi_to_db(
+        result,
+        image_filename=file.filename,
+        user_id=(user["id"] if user else None),
+        source_image_base64=_encode_image_to_png_base64(image),
+    )
     return result
 
 
@@ -770,9 +821,10 @@ def _save_to_db(
     result: PredictionResponse,
     image_filename: Optional[str] = None,
     user_id: Optional[str] = None,
+    source_image_base64: Optional[str] = None,
 ):
     """Persist a prediction result to the database."""
-    if DB is None:
+    if DB is None or user_id is None:
         return
     try:
         record = AnalysisRecord(
@@ -788,6 +840,7 @@ def _save_to_db(
             flt3_mutated=False,
             genetic_other=False,
             image_filename=image_filename,
+            source_image_base64=source_image_base64,
             gradcam_base64=result.gradcam_base64,
             user_id=user_id,
         )
@@ -800,6 +853,7 @@ def _save_multi_to_db(
     result: MultiCellResponse,
     image_filename: Optional[str] = None,
     user_id: Optional[str] = None,
+    source_image_base64: Optional[str] = None,
 ):
     """Persist a multi-cell prediction summary to the database."""
     if DB is None:
@@ -807,6 +861,8 @@ def _save_multi_to_db(
     try:
         prob = float(result.blast_percentage / 100.0)
         conf = max(prob, 1.0 - prob)
+        cells_dump = [c.model_dump() if hasattr(c, 'model_dump') else c.dict() for c in result.cells] if result.cells else []
+        cells_dump = [c.model_dump() if hasattr(c, 'model_dump') else c.dict() for c in result.cells] if result.cells else []
         record = AnalysisRecord(
             prediction=result.overall_prediction,
             probability=prob,
@@ -820,7 +876,9 @@ def _save_multi_to_db(
             flt3_mutated=False,
             genetic_other=False,
             image_filename=image_filename,
-            gradcam_base64=result.cells[0].gradcam_base64 if result.cells else None,
+            source_image_base64=source_image_base64,
+            gradcam_base64=result.annotated_image_base64 or (result.cells[0].gradcam_base64 if result.cells else None),
+            cells_data=json.dumps(cells_dump),
             user_id=user_id,
         )
         DB.save_analysis(record)
@@ -934,7 +992,6 @@ class GoogleAuthRequest(BaseModel):
 async def google_auth(req: GoogleAuthRequest):
     """Authenticate via Google Sign-In. Creates account on first login."""
     import urllib.request
-    import json as _json
 
     if DB is None:
         raise HTTPException(status_code=503, detail="Database not initialized")

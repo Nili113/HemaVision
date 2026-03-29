@@ -33,6 +33,7 @@ export interface PredictionResponse {
   risk_level: string;
   risk_color: string;
   gradcam_base64: string | null;
+  cells_data?: string | null;
   inference_time_ms: number;
   patient_context: {
     morphological_features: string;
@@ -49,6 +50,7 @@ export interface CellResult {
   risk_level: string;
   risk_color: string;
   gradcam_base64: string | null;
+  cells_data?: string | null;
   gradcam_heatmap_base64?: string | null;
   cell_image_base64?: string | null;
 }
@@ -148,7 +150,9 @@ export interface AnalysisRecord {
   risk_color: string;
   inference_time_ms: number;
   image_filename: string | null;
+  source_image_base64: string | null;
   gradcam_base64: string | null;
+  cells_data?: string | null;
   created_at: string;
 }
 
@@ -266,3 +270,13 @@ export async function getMetrics(): Promise<PlatformMetrics> {
 }
 
 export default api;
+
+export async function getAnalysis(
+  id: string,
+  token?: string | null
+): Promise<AnalysisRecord> {
+  const { data } = await api.get<AnalysisRecord>(`/analyses/${id}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+  });
+  return data;
+}

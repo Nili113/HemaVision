@@ -11,6 +11,25 @@
 This installs dependencies and starts both backend and frontend.
 Python dependencies are installed inside `.venv` automatically.
 
+Useful script-only workflow:
+
+```bash
+./scripts/install_all.sh
+./scripts/start_all.sh
+./scripts/status_all.sh
+./scripts/stop_all.sh
+```
+
+`start_all.sh` automatically loads:
+- root `.env` (backend variables like `DATABASE_URL`)
+- `frontend/.env` (frontend variables)
+
+If model warm-up is slow, increase timeouts:
+
+```bash
+BACKEND_STARTUP_TIMEOUT=300 FRONTEND_STARTUP_TIMEOUT=120 ./scripts/start_all.sh
+```
+
 After startup:
 - Frontend: http://localhost:5173
 - Backend: http://localhost:8000
@@ -55,6 +74,14 @@ python -m interfaces.gradio_app
 
 ## Production Deployment
 
+## Important: Is Vercel Alone Enough?
+
+No. Use Vercel for frontend only.
+
+- Vercel: React/Vite static frontend
+- Railway (or similar): FastAPI + PyTorch inference backend
+- Neon: PostgreSQL database
+
 ### Option 1: Docker
 
 ```bash
@@ -78,8 +105,8 @@ docker run --gpus all -p 8000:8000 hemavision
 The `railway.json` file configures the build and health check automatically.
 
 **Environment variables to set in Railway:**
-- `ENVIRONMENT=production`
-- `MODEL_PATH=/app/outputs/checkpoints/best_model.pth`
+- `DATABASE_URL=postgresql://...` (Neon connection string)
+- `MODEL_PATH=/app/outputs/checkpoints/best_model.pt`
 
 ### Option 3: Vercel (Frontend)
 
@@ -91,6 +118,7 @@ npx vercel deploy --prod
 
 **Environment variables to set in Vercel:**
 - `VITE_API_URL=https://your-railway-backend.up.railway.app`
+- `VITE_GOOGLE_CLIENT_ID=<your-google-client-id>`
 
 The `vercel.json` file handles SPA routing and asset caching.
 
@@ -134,9 +162,20 @@ outputs/
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ENVIRONMENT` | `development` | Runtime environment |
-| `MODEL_PATH` | `outputs/checkpoints/best_model.pth` | Path to trained model |
-| `VITE_API_URL` | `http://localhost:8000` | Backend API URL for frontend |
+| `DATABASE_URL` | _unset_ | Neon/PostgreSQL connection string (fallback to SQLite when unset) |
+| `MODEL_PATH` | `outputs/checkpoints/best_model.pt` | Path to trained model checkpoint |
+| `VITE_API_URL` | `/api` in local dev | Backend API URL used by frontend |
+| `VITE_GOOGLE_CLIENT_ID` | _unset_ | Google OAuth client ID for frontend login |
+
+## Recommended End-to-End Deployment Order
+
+1. Deploy backend to Railway.
+2. Add `DATABASE_URL` and `MODEL_PATH` in Railway.
+3. Verify backend health endpoint: `GET /health`.
+4. Deploy frontend to Vercel.
+5. Set `VITE_API_URL` in Vercel to Railway backend URL.
+6. Set `VITE_GOOGLE_CLIENT_ID` in Vercel.
+7. Validate app flow: auth, analysis, history image + Grad-CAM persistence.
 
 ---
 

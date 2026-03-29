@@ -31,6 +31,10 @@ cd "$ROOT_DIR"
 echo "[4/5] Preparing runtime directories..."
 mkdir -p outputs/checkpoints data .runlogs
 
+if [[ ! -f "$ROOT_DIR/.env" ]]; then
+  echo "Note: root .env not found. Create it to configure backend vars (e.g., DATABASE_URL for Neon)."
+fi
+
 echo "[5/5] Syncing model artifacts into outputs/checkpoints..."
 if [[ -f "$ROOT_DIR/best_model.pt" && ! -f "$ROOT_DIR/outputs/checkpoints/best_model.pt" ]]; then
   cp "$ROOT_DIR/best_model.pt" "$ROOT_DIR/outputs/checkpoints/best_model.pt"

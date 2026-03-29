@@ -46,7 +46,7 @@ export default function UploadZone({ onUpload }: UploadZoneProps) {
         {...(getRootProps() as any)}
         className={`
           relative rounded-xl text-center
-          cursor-pointer transition-all duration-300 group
+          cursor-pointer transition ease-out-custom duration-300 group
           ${isDragActive && !isDragReject
             ? 'border-primary/60 bg-primary/5'
             : isDragReject
@@ -70,7 +70,7 @@ export default function UploadZone({ onUpload }: UploadZoneProps) {
           <div
             className={`
               mx-auto w-14 h-14 rounded-xl flex items-center justify-center
-              transition-all duration-300
+              transition ease-out-custom duration-300
               ${isDragActive
                 ? 'bg-primary text-white scale-110'
                 : isDragReject
@@ -100,7 +100,7 @@ export default function UploadZone({ onUpload }: UploadZoneProps) {
           </div>
 
           {/* Browse button */}
-          <button className="px-5 py-2 rounded-lg text-sm font-medium text-slate-300 hover:text-white transition-colors"
+          <button className="px-5 py-2 rounded-lg text-sm font-medium text-slate-300 hover:text-white transition-colors ease-out-custom ease-out-custom active:scale-[0.97]"
             style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
             Browse Files
           </button>
@@ -111,7 +111,7 @@ export default function UploadZone({ onUpload }: UploadZoneProps) {
       <div className="grid sm:grid-cols-3 gap-3">
         {[
           {
-            icon: 'microscope',
+            icon: 'biotech',
             title: 'Best Results',
             desc: 'Single-cell crops or full blood smear fields — auto-segmented',
             color: '#137fec',

@@ -1,22 +1,16 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Menu, X } from 'lucide-react';
 import clsx from 'clsx';
 import { useAuth } from '../contexts/AuthContext';
 import AuthModal from './AuthModal';
-
-const navItems = [
-  { path: '/', label: 'Dashboard', icon: 'dashboard' },
-  { path: '/analyze', label: 'Analyze', icon: 'biotech' },
-  { path: '/history', label: 'History', icon: 'history' },
-  { path: '/about', label: 'About', icon: 'info' },
-];
+import { getGuestUsage } from '../lib/guestUsage';
 
 /* ── Gender-based avatar SVGs ────────── */
 function MaleAvatar({ size = 32 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg width={size} height={size} viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0 flex-none" style={{ minWidth: size, minHeight: size }}>
       <circle cx="20" cy="20" r="20" fill="url(#maleGrad)" />
       <defs>
         <linearGradient id="maleGrad" x1="0" y1="0" x2="40" y2="40">
@@ -36,7 +30,7 @@ function MaleAvatar({ size = 32 }: { size?: number }) {
 
 function FemaleAvatar({ size = 32 }: { size?: number }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg width={size} height={size} viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="shrink-0 flex-none" style={{ minWidth: size, minHeight: size }}>
       <circle cx="20" cy="20" r="20" fill="url(#femaleGrad)" />
       <defs>
         <linearGradient id="femaleGrad" x1="0" y1="0" x2="40" y2="40">
@@ -63,6 +57,7 @@ function UserAvatar({ sex, size = 32 }: { sex: string; size?: number }) {
 export default function Layout() {
   const location = useLocation();
   const { user, isAuthenticated, logout } = useAuth();
+  const [guestUsage, setGuestUsage] = useState({ used: 0, limit: 3, remaining: 3 });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
@@ -92,11 +87,40 @@ export default function Layout() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [dropdownOpen]);
 
+  // Allow pages to request auth modal open via a global event.
+  useEffect(() => {
+    const openAuth = () => setAuthModalOpen(true);
+    window.addEventListener('hemavision:open-auth-modal', openAuth as EventListener);
+    return () => window.removeEventListener('hemavision:open-auth-modal', openAuth as EventListener);
+  }, []);
+
+  useEffect(() => {
+    if (isAuthenticated) return;
+    const usage = getGuestUsage();
+    setGuestUsage(usage);
+  }, [isAuthenticated, location.pathname]);
+
+  const navItems = useMemo(
+    () =>
+      isAuthenticated
+        ? [
+            { path: '/', label: 'Workspace', icon: 'dashboard' },
+            { path: '/analyze', label: 'Analyze', icon: 'biotech' },
+            { path: '/history', label: 'Records', icon: 'history' },
+          ]
+        : [
+            { path: '/', label: 'Dashboard', icon: 'dashboard' },
+            { path: '/analyze', label: 'Analyze', icon: 'biotech' },
+            { path: '/about', label: 'About', icon: 'info' },
+          ],
+    [isAuthenticated]
+  );
+
   return (
     <div className="min-h-screen bg-background flex flex-col font-display">
       {/* ── Navbar ──────────────────────────────────── */}
       <nav className={clsx(
-        'sticky top-0 z-50 transition-all duration-500',
+        'sticky top-0 z-50 transition ease-out-custom duration-500',
         scrolled
           ? 'bg-[rgba(16,25,34,0.55)] backdrop-blur-2xl border-b border-white/[0.06] shadow-[0_4px_30px_rgba(0,0,0,0.3)]'
           : 'bg-[rgba(16,25,34,0.3)] backdrop-blur-xl border-b border-white/[0.03]'
@@ -104,7 +128,7 @@ export default function Layout() {
         <div className="section-container">
           <div className="flex items-center justify-between h-14">
             {/* Logo */}
-            <Link to="/" className="flex items-center gap-2.5 select-none group">
+            <Link to="/" className="flex items-center gap-2.5 select-none group active:scale-[0.97]">
               <div className="w-7 h-7 rounded-lg flex items-center justify-center transition-transform duration-300 group-hover:scale-110"
                 style={{ background: 'linear-gradient(135deg, rgba(19,127,236,0.2) 0%, rgba(124,58,237,0.15) 100%)' }}>
                 <span className="material-icons-outlined text-primary" style={{ fontSize: '18px' }}>bubble_chart</span>
@@ -127,7 +151,7 @@ export default function Layout() {
                     key={item.path}
                     to={item.path}
                     className={clsx(
-                      'relative px-3.5 py-1.5 text-[13px] font-medium transition-colors duration-200',
+                      'relative px-3.5 py-1.5 text-[13px] font-medium transition-colors ease-out-custom ease-out-custom duration-200',
                       isActive
                         ? 'text-white'
                         : 'text-slate-400 hover:text-slate-200'
@@ -153,7 +177,7 @@ export default function Layout() {
                 <div className="relative" ref={dropdownRef}>
                   <button
                     onClick={() => setDropdownOpen(!dropdownOpen)}
-                    className="flex items-center gap-2 rounded-full p-0.5 transition-all duration-200 hover:ring-2 hover:ring-primary/30"
+                    className="flex items-center gap-2 rounded-full p-0.5 transition ease-out-custom duration-200 hover:ring-2 hover:ring-primary/30 active:scale-[0.97]"
                   >
                     <UserAvatar sex={user.sex} size={32} />
                     <span className="hidden lg:block text-xs font-medium text-slate-300 max-w-[100px] truncate">
@@ -168,7 +192,7 @@ export default function Layout() {
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: -6, scale: 0.95 }}
                         transition={{ duration: 0.15 }}
-                        className="absolute right-0 top-11 w-56 rounded-xl border border-slate-800/80 shadow-2xl overflow-hidden z-50"
+                        className="absolute right-0 top-11 w-56 rounded-xl border border-slate-800/80 shadow-2xl overflow-hidden z-50 origin-top-right"
                         style={{ background: 'linear-gradient(180deg, #1d2a38 0%, #19232e 100%)' }}
                       >
                         {/* User info */}
@@ -187,7 +211,7 @@ export default function Layout() {
                           <Link
                             to="/analyze"
                             onClick={() => setDropdownOpen(false)}
-                            className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-300 hover:text-white hover:bg-white/[0.04] rounded-lg transition-colors"
+                            className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-300 hover:text-white hover:bg-white/[0.04] rounded-lg transition-colors ease-out-custom ease-out-custom"
                           >
                             <span className="material-icons-outlined text-primary" style={{ fontSize: '16px' }}>add_circle</span>
                             New Analysis
@@ -195,7 +219,7 @@ export default function Layout() {
                           <Link
                             to="/history"
                             onClick={() => setDropdownOpen(false)}
-                            className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-300 hover:text-white hover:bg-white/[0.04] rounded-lg transition-colors"
+                            className="flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-slate-300 hover:text-white hover:bg-white/[0.04] rounded-lg transition-colors ease-out-custom ease-out-custom"
                           >
                             <span className="material-icons-outlined text-slate-500" style={{ fontSize: '16px' }}>history</span>
                             My History
@@ -203,7 +227,7 @@ export default function Layout() {
                           <div className="my-1 border-t border-slate-800/60" />
                           <button
                             onClick={() => { logout(); setDropdownOpen(false); }}
-                            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-500/[0.06] rounded-lg transition-colors"
+                            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs font-medium text-red-400 hover:text-red-300 hover:bg-red-500/[0.06] rounded-lg transition-colors ease-out-custom ease-out-custom"
                           >
                             <span className="material-icons-outlined" style={{ fontSize: '16px' }}>logout</span>
                             Sign Out
@@ -215,18 +239,41 @@ export default function Layout() {
                 </div>
               ) : (
                 /* ── Not logged in: Sign In button ── */
-                <button
-                  onClick={() => setAuthModalOpen(true)}
-                  className="hidden md:inline-flex items-center gap-1.5 px-4 py-1.5 text-[13px] font-semibold rounded-lg transition-all duration-200 text-slate-300 hover:text-white"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
-                >
-                  <span className="material-icons-outlined" style={{ fontSize: '16px' }}>person</span>
-                  Sign In
-                </button>
+                <div className="hidden md:flex items-center gap-2">
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 bg-white/5" title={`${guestUsage.remaining} analyses remaining`}>
+                    <div className="flex gap-0.5 mr-1">
+                      {[...Array(guestUsage.limit)].map((_, i) => (
+                        <div
+                          key={i}
+                          className={clsx(
+                            'w-1 h-3 rounded-sm transition-colors duration-300',
+                            i < guestUsage.used 
+                              ? guestUsage.remaining === 0 ? 'bg-red-500' : 'bg-primary'
+                              : 'bg-white/10'
+                          )}
+                        />
+                      ))}
+                    </div>
+                    <span className={clsx(
+                      'text-xs font-bold tracking-wide tabular-nums',
+                      guestUsage.remaining === 0 ? 'text-red-400' : 'text-slate-300'
+                    )}>
+                      Guest {guestUsage.used}/{guestUsage.limit}
+                    </span>
+                  </div>
+                  <button
+                    onClick={() => setAuthModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-4 py-1.5 text-[13px] font-semibold rounded-lg transition ease-out-custom duration-200 text-slate-300 hover:text-white"
+                    style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}
+                  >
+                    <span className="material-icons-outlined" style={{ fontSize: '16px' }}>person</span>
+                    Sign In
+                  </button>
+                </div>
               )}
 
               <button
-                className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-white transition-colors"
+                className="md:hidden w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-white transition-colors ease-out-custom ease-out-custom active:scale-[0.97]"
                 onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
                 aria-label="Toggle menu"
               >
@@ -285,6 +332,9 @@ export default function Layout() {
                       transition={{ delay: 0, duration: 0.2 }}
                       className="mb-2"
                     >
+                      <div className="px-3 py-1.5 mb-2 rounded-lg text-xs font-semibold text-slate-300 border border-slate-700 bg-slate-900/50">
+                        Guest {guestUsage.used}/{guestUsage.limit}
+                      </div>
                       <button
                         onClick={() => { setMobileMenuOpen(false); setAuthModalOpen(true); }}
                         className="flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium text-primary w-full"
@@ -308,7 +358,7 @@ export default function Layout() {
                         <Link
                           to={item.path}
                           className={clsx(
-                            'flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium transition-all',
+                            'flex items-center gap-3 px-3 py-3 rounded-xl text-sm font-medium transition ease-out-custom',
                             isActive
                               ? 'text-white bg-primary/10'
                               : 'text-slate-400 hover:text-white active:bg-slate-800/50'
@@ -335,7 +385,7 @@ export default function Layout() {
                     >
                       <button
                         onClick={() => { logout(); setMobileMenuOpen(false); }}
-                        className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-semibold text-red-400 hover:bg-red-500/10 transition-colors"
+                        className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl text-sm font-semibold text-red-400 hover:bg-red-500/10 transition-colors ease-out-custom ease-out-custom"
                       >
                         <span className="material-icons-outlined" style={{ fontSize: '18px' }}>logout</span>
                         Sign Out

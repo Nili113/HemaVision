@@ -49,5 +49,5 @@ frontend/node_modules/
 # Logs
 *.log
 .runlogs/
-
+.agents
 CLAUDE.md

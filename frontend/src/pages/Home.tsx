@@ -1,21 +1,75 @@
 import { motion, useScroll, useTransform } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { useRef, useEffect, useState } from 'react';
-import { getMetrics, type PlatformMetrics } from '../lib/api';
+import {
+  getMetrics,
+  getAnalyses,
+  getAnalysisStats,
+  type PlatformMetrics,
+  type AnalysisRecord,
+  type AnalysisStats,
+} from '../lib/api';
+import { useAuth } from '../contexts/AuthContext';
+import { getGuestUsage } from '../lib/guestUsage';
 
 const ease = [0.25, 0.1, 0.25, 1] as const;
 
 function FadeIn({ children, delay = 0, className = '' }: { children: React.ReactNode; delay?: number; className?: string }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 24 }}
-      whileInView={{ opacity: 1, y: 0 }}
+      initial={{ opacity: 0, y: 24, scale: 0.95 }}
+      whileInView={{ opacity: 1, y: 0, scale: 1 }}
       viewport={{ once: true, margin: '-60px' }}
       transition={{ duration: 0.7, delay, ease }}
       className={className}
     >
       {children}
     </motion.div>
+  );
+}
+
+function WorkspaceStatCard({ label, value, icon, accent, delay = 0 }: { label: string; value: string; icon: string; accent?: 'danger' | 'success', delay?: number }) {
+  const isDanger = accent === 'danger';
+  const isSuccess = accent === 'success';
+  const iconBg = isDanger ? 'bg-red-500/10' : isSuccess ? 'bg-emerald-500/10' : 'bg-primary/10';
+  const iconColor = isDanger ? 'text-red-400' : isSuccess ? 'text-emerald-400' : 'text-primary';
+  const glow = isDanger ? 'group-hover:shadow-[0_0_20px_rgba(239,68,68,0.15)]' : isSuccess ? 'group-hover:shadow-[0_0_20px_rgba(16,185,129,0.15)]' : 'group-hover:shadow-[0_0_20px_rgba(19,127,236,0.15)]';
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 20, scale: 0.95 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.5, delay, ease: [0.23, 1, 0.32, 1] }}
+      className={`group relative p-5 rounded-2xl bg-surface border border-white/5 transition ease-out-custom duration-300 hover:bg-white/[0.02] hover:-translate-y-1 ${glow}`}
+    >
+      <div className="flex justify-between items-start mb-4">
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${iconBg} border border-white/5`}>
+          <span className={`material-icons-outlined text-[20px] ${iconColor}`}>{icon}</span>
+        </div>
+      </div>
+      <div>
+        <h3 className="text-2xl font-bold text-white tabular-nums tracking-tight">{value}</h3>
+        <p className="text-xs font-semibold uppercase tracking-wider text-slate-500 mt-1">{label}</p>
+      </div>
+    </motion.div>
+  );
+}
+
+function WorkspaceSignal({ label, value, tone }: { label: string; value: string; tone: 'success' | 'info' }) {
+  const dot = tone === 'success' ? 'bg-emerald-400 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-primary shadow-[0_0_8px_rgba(19,127,236,0.5)]';
+  const text = tone === 'success' ? 'text-emerald-300' : 'text-blue-300';
+
+  return (
+    <div className="flex items-center justify-between py-3 px-4 rounded-xl border border-white/5 bg-black/20 hover:bg-black/30 transition-colors ease-out-custom ease-out-custom">
+      <span className="text-sm font-medium text-slate-400">{label}</span>
+      <span className={`inline-flex items-center gap-2 font-semibold text-sm ${text}`}>
+        <span className="relative flex h-2 w-2">
+          <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${tone === 'success' ? 'bg-emerald-400' : 'bg-primary'}`} />
+          <span className={`relative inline-flex rounded-full h-2 w-2 ${dot}`} />
+        </span>
+        {value}
+      </span>
+    </div>
   );
 }
 
@@ -323,6 +377,7 @@ function CellVisualization() {
 
 export default function Home() {
   const heroRef = useRef<HTMLDivElement>(null);
+  const { isAuthenticated, token, user } = useAuth();
   const { scrollYProgress } = useScroll({
     target: heroRef,
     offset: ['start start', 'end start'],
@@ -332,13 +387,286 @@ export default function Home() {
 
   // Fetch dynamic metrics from API
   const [metrics, setMetrics] = useState<PlatformMetrics>(DEFAULT_METRICS);
+  const [workspaceRecords, setWorkspaceRecords] = useState<AnalysisRecord[]>([]);
+  const [workspaceStats, setWorkspaceStats] = useState<AnalysisStats | null>(null);
+  const [workspaceLoading, setWorkspaceLoading] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+
   useEffect(() => {
     getMetrics().then(setMetrics).catch(() => { /* use defaults */ });
   }, []);
 
+  useEffect(() => {
+    if (!isAuthenticated || !token) return;
+
+    setWorkspaceLoading(true);
+    setWorkspaceError(null);
+
+    Promise.all([getAnalyses(6, 0, token), getAnalysisStats(token)])
+      .then(([analyses, stats]) => {
+        setWorkspaceRecords(analyses.records);
+        setWorkspaceStats(stats);
+      })
+      .catch(() => {
+        setWorkspaceError('Could not load workspace activity.');
+      })
+      .finally(() => setWorkspaceLoading(false));
+  }, [isAuthenticated, token]);
+
+/* ── Workspace Overview Fragment ── */
+  if (isAuthenticated) {
+    return (
+      <motion.div 
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.6 }}
+        className="space-y-6 py-8 px-4 sm:px-6 lg:px-8 max-w-7xl mx-auto min-h-[calc(100vh-4rem)]"
+      >
+        {/* Header Section */}
+        <motion.section 
+          initial={{ opacity: 0, y: -20, scale: 0.95 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          transition={{ duration: 0.7, ease: [0.16, 1, 0.3, 1] }}
+          className="relative overflow-hidden rounded-3xl border border-white/5 bg-gradient-to-br from-surface via-surface-light/50 to-background p-8 sm:p-10 shadow-2xl"
+        >
+          {/* Decorative shapes */}
+          <div className="absolute top-[-50%] right-[-10%] w-96 h-96 bg-primary/20 rounded-full blur-[100px] pointer-events-none" />
+          <div className="absolute bottom-[-30%] left-[20%] w-72 h-72 bg-purple-500/10 rounded-full blur-[80px] pointer-events-none" />
+          
+          <div className="relative z-10 flex flex-col md:flex-row md:items-end justify-between gap-6">
+            <div className="space-y-4 max-w-2xl">
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 backdrop-blur-md">
+                <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="text-xs font-semibold text-emerald-400 uppercase tracking-widest">Active Session</span>
+              </div>
+              <h1 className="text-4xl sm:text-5xl font-bold text-white font-display tracking-tight">
+                Welcome back,<br />
+                <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary via-cyan-400 to-purple-400">
+                  {user?.display_name || user?.username || 'Researcher'}
+                </span>
+              </h1>
+              <p className="text-slate-400 text-lg">
+                Your diagnostic hub is ready. Review recent morphologic analysis or launch a new session.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-3">
+              <Link to="/history" className="px-6 py-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-white font-semibold text-sm transition ease-out-custom flex items-center gap-2 backdrop-blur-md active:scale-[0.97]">
+                <span className="material-icons-outlined text-[18px]">history</span>
+                Records
+              </Link>
+              <Link to="/analyze" className="px-6 py-3 rounded-xl bg-primary hover:bg-primary-hover border border-primary-400 text-white font-semibold text-sm transition ease-out-custom flex items-center gap-2 shadow-[0_0_20px_rgba(19,127,236,0.3)] hover:shadow-[0_0_30px_rgba(19,127,236,0.5)] active:scale-[0.97]">
+                <span className="material-icons-outlined text-[18px]">add_circle</span>
+                New Analysis
+              </Link>
+            </div>
+          </div>
+        </motion.section>
+
+        {/* Stats Grid */}
+        <section className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          <WorkspaceStatCard
+            label="Total Analyzed"
+            value={workspaceStats ? String(workspaceStats.total_analyses) : workspaceLoading ? '...' : '0'}
+            icon="biotech"
+            delay={0.1}
+          />
+          <WorkspaceStatCard
+            label="AML Detections"
+            value={workspaceStats ? String(workspaceStats.aml_detected) : workspaceLoading ? '...' : '0'}
+            icon="warning_amber"
+            accent="danger"
+            delay={0.2}
+          />
+          <WorkspaceStatCard
+            label="Avg Confidence"
+            value={workspaceStats ? `${(workspaceStats.avg_confidence * 100).toFixed(1)}%` : workspaceLoading ? '...' : '0%'}
+            icon="analytics"
+            accent="success"
+            delay={0.3}
+          />
+          <WorkspaceStatCard
+            label="Avg Speed"
+            value={workspaceStats ? `${workspaceStats.avg_inference_ms.toFixed(1)}ms` : workspaceLoading ? '...' : '0ms'}
+            icon="speed"
+            delay={0.4}
+          />
+        </section>
+
+                {/* Visual History & Activity */}
+        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Main List */}
+          <motion.div 
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
+            className="lg:col-span-2 space-y-4"
+          >
+            <div className="flex items-center justify-between px-2">
+              <h2 className="text-xl font-bold font-display text-white">Recent Scans</h2>
+              <Link to="/history" className="text-sm font-semibold text-primary hover:text-white transition-colors ease-out-custom ease-out-custom flex items-center gap-1 group active:scale-[0.97]">
+                View All <span className="material-icons-outlined text-[16px] group-hover:translate-x-1 transition-transform">arrow_forward</span>
+              </Link>
+            </div>
+
+            <div className="bg-surface border border-white/5 rounded-2xl overflow-hidden p-2 relative shadow-xl">
+              <div className="absolute top-0 right-0 w-64 h-64 bg-primary/5 rounded-full blur-[80px] pointer-events-none" />
+              
+              {!workspaceLoading && workspaceRecords.length === 0 && !workspaceError && (
+                <motion.div 
+                  initial={{ opacity: 0, scale: 0.95 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="p-12 text-center flex flex-col items-center justify-center relative z-10"
+                >
+                  <div className="w-20 h-20 rounded-full bg-gradient-to-tr from-primary/20 to-purple-500/20 flex items-center justify-center mb-6 shadow-[0_0_40px_rgba(19,127,236,0.15)] border border-white/10">
+                    <span className="material-icons-outlined text-4xl text-primary animate-pulse">biotech</span>
+                  </div>
+                  <h3 className="text-xl font-bold text-white mb-2">Ready for first analysis</h3>
+                  <p className="text-slate-400 max-w-sm mb-8 text-sm">You haven't run any morphological analysis yet. Upload a peripheral blood smear to generate insights instantly.</p>
+                  <Link to="/analyze" className="px-6 py-3 rounded-xl bg-primary hover:bg-primary-hover text-white text-sm font-bold transition ease-out-custom shadow-[0_0_20px_rgba(19,127,236,0.3)] hover:shadow-[0_0_30px_rgba(19,127,236,0.5)] border border-primary-400 flex items-center gap-2 active:scale-[0.97]">
+                    <span className="material-icons-outlined text-[18px]">add_photo_alternate</span>
+                    Run Analysis
+                  </Link>
+                </motion.div>
+              )}
+
+              {workspaceLoading && (
+                <div className="space-y-2 p-2">
+                  {[1,2,3].map(i => (
+                    <div key={i} className="h-20 bg-white/[0.03] border border-white/5 rounded-xl animate-pulse flex items-center p-3 gap-4">
+                      <div className="w-14 h-14 bg-white/5 rounded-lg shrink-0" />
+                      <div className="space-y-2 flex-1">
+                        <div className="h-4 bg-white/5 rounded w-1/3" />
+                        <div className="h-3 bg-white/5 rounded w-1/4" />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {workspaceError && (
+                <div className="m-4 p-4 bg-red-500/10 border border-red-500/20 rounded-xl text-red-400">
+                  {workspaceError}
+                </div>
+              )}
+
+              {!workspaceLoading && workspaceRecords.length > 0 && (
+                <div className="space-y-2">
+                  {workspaceRecords.map((record, idx) => {
+                    const isAml = record.prediction.includes('AML');
+                    return (
+                      <motion.div 
+                        initial={{ opacity: 0, x: -10 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: idx * 0.05 }}
+                        key={record.id} 
+                        className="group relative flex items-center gap-4 p-3 rounded-xl hover:bg-white/5 transition ease-out-custom border border-transparent hover:border-white/10"
+                      >
+                        {record.source_image_base64 ? (
+                          <div className="relative w-16 h-16 shrink-0 rounded-lg overflow-hidden border border-white/10">
+                            <img src={`data:image/png;base64,${record.source_image_base64}`} alt="cell" className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500" />
+                            <div className="absolute inset-0 bg-black/20 group-hover:bg-transparent transition-colors ease-out-custom ease-out-custom" />
+                          </div>
+                        ) : (
+                          <div className="w-16 h-16 rounded-lg bg-white/5 border border-white/10 flex items-center justify-center shrink-0">
+                            <span className="material-icons-outlined text-slate-500">blur_on</span>
+                          </div>
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <h4 className="text-base font-semibold text-white truncate">{record.prediction}</h4>
+                          <div className="flex items-center gap-3 mt-1">
+                            <span className="text-xs text-slate-400">
+                              {new Date(record.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                            <span className="w-1 h-1 rounded-full bg-slate-600" />
+                            <span className="text-xs font-mono text-slate-500">Conf: {(record.confidence * 100).toFixed(1)}%</span>
+                          </div>
+                        </div>
+                        <div className="pr-2">
+                          <span className={`px-3 py-1 text-xs font-bold rounded-md ${isAml ? 'bg-red-500/10 text-red-400 border border-red-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}>
+                            {record.risk_level}
+                          </span>
+                        </div>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </motion.div>
+
+          {/* Right Panel - System Status */}
+          <motion.div 
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.5, delay: 0.3 }}
+            className="space-y-4"
+          >
+            <h2 className="text-xl font-bold font-display text-white px-2">Operational Health</h2>
+            <div className="bg-surface border border-white/5 rounded-2xl p-6 relative overflow-hidden shadow-xl">
+              <div className="absolute top-[-20%] right-[-10%] w-40 h-40 bg-emerald-500/10 rounded-full blur-[60px]" />
+              
+              <div className="space-y-3.5 relative z-10">
+                <WorkspaceSignal label="API Gateway" value="Stable" tone="success" />
+                <WorkspaceSignal label="Neural Engine" value="Online" tone="success" />
+                <WorkspaceSignal label="Auto-Segmentation" value="Active" tone="success" />
+                <WorkspaceSignal label="Explainable AI (Grad-CAM)" value="Ready" tone="success" />
+                <WorkspaceSignal label="PostgreSQL Data Store" value="Connected" tone="success" />
+              </div>
+
+              <div className="mt-8 pt-6 border-t border-white/5 relative z-10">
+                <h3 className="text-xs font-semibold uppercase tracking-widest text-slate-500 mb-4">Quick Actions</h3>
+                <div className="grid gap-3">
+                   <Link to="/analyze" className="group w-full flex items-center justify-between p-3.5 rounded-xl bg-white/5 hover:bg-white/10 transition-colors ease-out-custom ease-out-custom border border-white/5 active:scale-[0.97]">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+                          <span className="material-icons-outlined text-primary text-[18px]">cloud_upload</span>
+                        </div>
+                        <span className="text-sm font-semibold text-white">Upload New Smear</span>
+                      </div>
+                      <span className="material-icons-outlined text-slate-400 group-hover:text-white transition-colors ease-out-custom ease-out-custom group-hover:translate-x-1 transform duration-200">chevron_right</span>
+                   </Link>
+                   <Link to="/history" className="group w-full flex items-center justify-between p-3.5 rounded-xl bg-white/5 hover:bg-white/10 transition-colors ease-out-custom ease-out-custom border border-white/5 active:scale-[0.97]">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-lg bg-purple-500/20 flex items-center justify-center">
+                          <span className="material-icons-outlined text-purple-400 text-[18px]">folder_shared</span>
+                        </div>
+                        <span className="text-sm font-semibold text-white">View Case Records</span>
+                      </div>
+                      <span className="material-icons-outlined text-slate-400 group-hover:text-white transition-colors ease-out-custom ease-out-custom group-hover:translate-x-1 transform duration-200">chevron_right</span>
+                   </Link>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        </section>
+
+      </motion.div>
+    );
+  }
+
+  const guest = getGuestUsage();
+
   return (
     <div className="space-y-5 sm:space-y-8 py-6 sm:py-8">
       <div className="section-container space-y-5 sm:space-y-8">
+        <section className="rounded-xl border border-slate-800/70 p-4 sm:p-5"
+          style={{ background: 'linear-gradient(135deg, rgba(19,127,236,0.08) 0%, rgba(25,35,46,0.85) 55%, rgba(25,35,46,0.85) 100%)' }}>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-wider text-primary font-semibold">Guest Mode</p>
+              <p className="text-sm text-slate-300 mt-1">
+                You have used {guest.used} of {guest.limit} analyses. Create an account to unlock unlimited sessions and complete history.
+              </p>
+            </div>
+            <button
+              onClick={() => window.dispatchEvent(new Event('hemavision:open-auth-modal'))}
+              className="btn-secondary !py-2 !px-4 text-xs"
+            >
+              Sign In to Unlock
+            </button>
+          </div>
+        </section>
+
         {/* ═══════════════════════════════════
             HERO
             ═══════════════════════════════════ */}
@@ -357,8 +685,8 @@ export default function Home() {
             <div className="max-w-2xl space-y-6">
               {/* Status badge + CTA together */}
               <motion.div
-                initial={{ opacity: 0, y: 12 }}
-                animate={{ opacity: 1, y: 0 }}
+                initial={{ opacity: 0, y: 12, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
                 transition={{ duration: 0.6, delay: 0.1, ease }}
                 className="flex flex-wrap items-center gap-3"
               >
@@ -372,7 +700,7 @@ export default function Home() {
                 </div>
                 <Link
                   to="/analyze"
-                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all duration-200 hover:scale-105"
+                  className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition ease-out-custom duration-200 hover:scale-105 active:scale-[0.97]"
                   style={{ background: 'linear-gradient(135deg, #137fec 0%, #0e6adb 100%)', color: '#fff' }}
                 >
                   <span className="material-icons-outlined" style={{ fontSize: '14px' }}>play_arrow</span>
@@ -382,8 +710,8 @@ export default function Home() {
 
               {/* Headline */}
               <motion.h1
-                initial={{ opacity: 0, y: 28 }}
-                animate={{ opacity: 1, y: 0 }}
+                initial={{ opacity: 0, y: 28, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
                 transition={{ duration: 0.8, delay: 0.2, ease }}
                 className="text-hero text-white leading-tight"
               >
@@ -396,8 +724,8 @@ export default function Home() {
 
               {/* Subtitle */}
               <motion.p
-                initial={{ opacity: 0, y: 18 }}
-                animate={{ opacity: 1, y: 0 }}
+                initial={{ opacity: 0, y: 18, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
                 transition={{ duration: 0.8, delay: 0.35, ease }}
                 className="text-base sm:text-lg text-slate-300/90 max-w-xl leading-relaxed"
               >
@@ -407,8 +735,8 @@ export default function Home() {
 
               {/* Live stats row — dynamic from API */}
               <motion.div
-                initial={{ opacity: 0, y: 16 }}
-                animate={{ opacity: 1, y: 0 }}
+                initial={{ opacity: 0, y: 16, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
                 transition={{ duration: 0.8, delay: 0.5, ease }}
                 className="pt-2 flex flex-wrap gap-4 sm:gap-6"
               >
@@ -430,7 +758,7 @@ export default function Home() {
 
             {/* Hero visual — abstract cell SVG */}
             <motion.div
-              initial={{ opacity: 0, scale: 0.85 }}
+              initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 1, delay: 0.4, ease }}
               className="hidden md:block w-52 h-52 lg:w-72 lg:h-72 flex-shrink-0"
@@ -588,7 +916,7 @@ export default function Home() {
             },
           ].map((feature, i) => (
             <FadeIn key={feature.title} delay={i * 0.1}>
-              <div className="h-full p-6 rounded-xl border border-slate-800/60 transition-all duration-300 hover:translate-y-[-2px] hover:shadow-card-hover group"
+              <div className="h-full p-6 rounded-xl border border-slate-800/60 transition ease-out-custom duration-300 hover:translate-y-[-2px] hover:shadow-card-hover group"
                 style={{ background: 'linear-gradient(180deg, #19232e 0%, #151e29 100%)' }}>
                 <div className="w-10 h-10 rounded-lg flex items-center justify-center mb-4 transition-transform duration-300 group-hover:scale-110"
                   style={{ background: `${feature.color}15`, border: `1px solid ${feature.color}25` }}>

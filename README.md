@@ -136,7 +136,7 @@ HemaVision/
 |
 |-- utils/
 |   |-- config.py                      Centralized configuration (paths, model, training)
-|   +-- database.py                    SQLite database layer for analysis records
+|   +-- database.py                    Neon/PostgreSQL + SQLite fallback data layer
 |
 |-- main.py                            Pipeline orchestrator (7-phase train/eval pipeline)
 |-- requirements.txt                   Python dependencies
@@ -185,14 +185,37 @@ This installs React, Tailwind CSS, Framer Motion, Axios, React Router, and all o
 cp frontend/.env.example frontend/.env
 ```
 
+Create a backend `.env` file at repository root for server-side variables:
+
+```bash
+cat > .env <<'EOF'
+DATABASE_URL=postgresql://<user>:<password>@<host>/<db>?sslmode=require
+EOF
+```
+
+If `DATABASE_URL` is not provided, the backend falls back to local SQLite (`data/hemavision.db`).
+
 Edit `frontend/.env` if your backend runs on a different host or port:
 
 ```
 VITE_API_URL=/api
-VITE_GOOGLE_CLIENT_ID={{please-get-this-from-google-cloud}}
+VITE_GOOGLE_CLIENT_ID=907725742398-nd482ti0u0sn28h44v6au6o11j4kfulc.apps.googleusercontent.com
 ```
 
 Note: `/api` is recommended for development because Vite proxies it to FastAPI.
+
+Google OAuth setup links:
+- Credentials: https://console.cloud.google.com/apis/credentials
+- OAuth consent screen: https://console.cloud.google.com/apis/credentials/consent
+
+For local development, add authorized JavaScript origins such as:
+- `http://localhost:5173`
+- `http://127.0.0.1:5173`
+
+Guest usage policy:
+- Unauthenticated users can run up to 3 analyses.
+- After that, the app prompts sign-in.
+- History is user-scoped after sign-in.
 
 ---
 
@@ -220,8 +243,19 @@ Open after startup:
 Additional service scripts:
 
 ```bash
+./scripts/install_all.sh   # install backend/frontend deps only
+./scripts/start_all.sh     # start backend+frontend
 ./scripts/stop_all.sh      # stop everything
 ./scripts/status_all.sh    # check if services are running
+```
+
+Script notes:
+- `start_all.sh` loads both root `.env` and `frontend/.env` automatically.
+- Backend model warm-up can take time; default startup timeout is 180 seconds.
+- You can tune timeouts when needed:
+
+```bash
+BACKEND_STARTUP_TIMEOUT=300 FRONTEND_STARTUP_TIMEOUT=120 ./scripts/start_all.sh
 ```
 
 Manual backend/frontend startup commands are optional and only needed if you do not want the one-command flow.
@@ -234,7 +268,7 @@ python -m interfaces.fastapi_app
 
 This starts the REST API server on `http://localhost:8000`. On startup it:
 - Loads the trained model checkpoint (or starts in demo mode if none found)
-- Initializes the SQLite database at `data/hemavision.db`
+- Connects to PostgreSQL/Neon when `DATABASE_URL` is set, otherwise initializes SQLite at `data/hemavision.db`
 - Enables CORS for frontend connections
 
 API documentation is auto-generated at `http://localhost:8000/docs` (Swagger UI).
@@ -363,7 +397,11 @@ curl -X POST http://localhost:8000/predict \
 
 ## Database
 
-HemaVision uses **SQLite** for persistent storage of analysis records. The database file is created automatically at `data/hemavision.db` on first server startup.
+HemaVision supports:
+- **PostgreSQL (Neon recommended)** when `DATABASE_URL` is set.
+- **SQLite fallback** at `data/hemavision.db` when `DATABASE_URL` is absent.
+
+Analysis history stores both explainability outputs and image context so users can review prior uploads visually.
 
 ### Schema
 
@@ -382,12 +420,13 @@ CREATE TABLE analyses (
     flt3_mutated    INTEGER NOT NULL,    -- 0 or 1
     genetic_other   INTEGER NOT NULL,    -- 0 or 1
     image_filename  TEXT,                -- Original upload filename
+    source_image_base64 TEXT,            -- Persisted input image (base64 PNG)
     gradcam_base64  TEXT,                -- Grad-CAM overlay (base64 PNG)
     created_at      TEXT NOT NULL        -- ISO 8601 timestamp
 );
 ```
 
-Indexed on `created_at DESC` and `risk_level` for fast queries. Uses WAL journal mode for concurrent read performance.
+Indexed on `created_at DESC` and `risk_level` for fast queries.
 
 ---
 
@@ -403,7 +442,9 @@ Indexed on `created_at DESC` and `risk_level` for fast queries. Uses WAL journal
 
 5. **Grad-CAM on layer4** — The final convolutional block provides the best trade-off between spatial resolution and semantic content. Earlier layers have higher resolution but less meaningful features; later fully-connected layers lose spatial information entirely.
 
-6. **SQLite for persistence** — Zero-configuration, file-based, no external services needed. Suitable for single-server deployments and research contexts. Can be swapped for PostgreSQL in production by modifying `utils/database.py`.
+6. **Production-ready persistence path** — Neon/PostgreSQL for cloud deployments with SQLite fallback for local development and quick setup.
+
+7. **Design Engineering Philosophy** — Implemented custom Framer Motion variants using `cubic-bezier` standard timings to produce lightweight, intuitive animations. All core interfaces strictly enforce grid boundary alignment (`section-container`) ensuring spatial predictability across states.
 
 ---
 
@@ -453,6 +494,18 @@ The data loader groups images by patient ID and performs a 70/10/20 train/valida
 
 ## Deployment
 
+Vercel alone is **not** enough for this project.
+
+Reason:
+- Vercel is great for the React frontend.
+- Your FastAPI backend loads PyTorch models and runs heavier inference, which should run on a dedicated backend host (Railway/Render/Fly.io/GPU VM).
+
+Recommended architecture:
+- Frontend: Vercel
+- Backend API: Railway (using your `Dockerfile` + `railway.json`)
+- Database: Neon PostgreSQL (via `DATABASE_URL`)
+- Optional model artifacts: keep in repo/checkpoints or mount external storage for larger models
+
 ### Docker
 
 ```bash
@@ -468,7 +521,9 @@ npm run build
 npx vercel deploy --prod
 ```
 
-Set `VITE_API_URL` to your deployed backend URL in Vercel environment variables.
+Set these in Vercel project settings:
+- `VITE_API_URL=https://<your-backend-domain>`
+- `VITE_GOOGLE_CLIENT_ID=<your-google-client-id>`
 
 ### Backend to Railway
 
@@ -478,7 +533,19 @@ railway init
 railway up
 ```
 
-The `railway.json` file configures the Dockerfile build, start command, and health check automatically.
+Set these in Railway variables:
+- `DATABASE_URL=<your-neon-connection-string>`
+- `MODEL_PATH=/app/outputs/checkpoints/best_model.pt` (or `final_model.pt`)
+
+The `railway.json` file configures Docker build and health checks.
+
+### Deploy Checklist (Practical)
+
+1. Deploy backend to Railway first and confirm `GET /health` is healthy.
+2. Add Railway backend URL to Vercel as `VITE_API_URL`.
+3. Deploy frontend to Vercel.
+4. Configure Google OAuth allowed origins/redirects for your Vercel domain.
+5. Test full flow: login, analyze image, confirm history shows both source image + Grad-CAM.
 
 ---
 
@@ -492,6 +559,3 @@ Research and educational use only. This system is not intended for clinical diag
 
 **Built by Firoj, Nilima, and Aashika**
 
-Crafted with clarity, purpose, and the potential to impact human lives.
-
-</div>

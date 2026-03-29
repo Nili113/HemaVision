@@ -9,8 +9,49 @@ FRONTEND_PID_FILE="$LOG_DIR/frontend.pid"
 
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+BACKEND_STARTUP_TIMEOUT="${BACKEND_STARTUP_TIMEOUT:-180}"
+FRONTEND_STARTUP_TIMEOUT="${FRONTEND_STARTUP_TIMEOUT:-60}"
 
 mkdir -p "$LOG_DIR"
+
+load_env_file() {
+  local env_file="$1"
+  if [[ ! -f "$env_file" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    # Trim leading/trailing whitespace
+    line="${line#${line%%[![:space:]]*}}"
+    line="${line%${line##*[![:space:]]}}"
+
+    # Skip blanks/comments
+    [[ -z "$line" ]] && continue
+    [[ "$line" == \#* ]] && continue
+
+    if [[ "$line" == *=* ]]; then
+      local key="${line%%=*}"
+      local value="${line#*=}"
+      key="${key#${key%%[![:space:]]*}}"
+      key="${key%${key##*[![:space:]]}}"
+      value="${value#${value%%[![:space:]]*}}"
+      value="${value%${value##*[![:space:]]}}"
+      # Strip simple surrounding quotes if present
+      if [[ "$value" =~ ^\".*\"$ ]]; then
+        value="${value:1:${#value}-2}"
+      elif [[ "$value" =~ ^\'.*\'$ ]]; then
+        value="${value:1:${#value}-2}"
+      fi
+      if [[ -n "$key" ]]; then
+        export "$key=$value"
+      fi
+    fi
+  done < "$env_file"
+}
+
+# Load root backend env (e.g., DATABASE_URL) and frontend env when available.
+load_env_file "$ROOT_DIR/.env"
+load_env_file "$ROOT_DIR/frontend/.env"
 
 if [[ ! -x "$VENV_DIR/bin/python" ]]; then
   echo "Missing .venv. Run ./scripts/install_all.sh first."
@@ -82,7 +123,7 @@ cd "$ROOT_DIR"
 
 echo "Waiting for backend health check..."
 backend_ready=false
-for _ in {1..30}; do
+for ((i = 1; i <= BACKEND_STARTUP_TIMEOUT; i++)); do
   if curl -s "http://localhost:${BACKEND_PORT}/health" >/dev/null; then
     backend_ready=true
     break
@@ -93,11 +134,12 @@ done
 if [[ "$backend_ready" != "true" ]]; then
   echo "Backend failed to become healthy on port $BACKEND_PORT."
   echo "Check log: $LOG_DIR/backend.log"
+  echo "Tip: increase timeout with BACKEND_STARTUP_TIMEOUT=300 ./scripts/start_all.sh"
   exit 1
 fi
 
 frontend_ready=false
-for _ in {1..20}; do
+for ((i = 1; i <= FRONTEND_STARTUP_TIMEOUT; i++)); do
   if curl -s "http://localhost:${FRONTEND_PORT}" >/dev/null 2>&1; then
     frontend_ready=true
     break
@@ -108,6 +150,7 @@ done
 if [[ "$frontend_ready" != "true" ]]; then
   echo "Frontend failed to become ready on port $FRONTEND_PORT."
   echo "Check log: $LOG_DIR/frontend.log"
+  echo "Tip: increase timeout with FRONTEND_STARTUP_TIMEOUT=120 ./scripts/start_all.sh"
   exit 1
 fi
 

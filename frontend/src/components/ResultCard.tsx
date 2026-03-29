@@ -150,7 +150,7 @@ export default function ResultCard({ result }: ResultCardProps) {
                   return (
                     <div
                       key={cell.cell_index}
-                      className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-slate-800/40 transition-colors"
+                      className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-slate-800/40 transition-colors ease-out-custom ease-out-custom"
                     >
                       <div className="flex items-center gap-2.5">
                         <div
@@ -168,7 +168,7 @@ export default function ResultCard({ result }: ResultCardProps) {
                       <div className="flex items-center gap-2.5">
                         <div className="w-16 bg-slate-800 rounded-full h-1 overflow-hidden">
                           <div
-                            className={clsx('h-full rounded-full transition-all', cellIsBlast ? 'bg-red-500' : 'bg-emerald-500')}
+                            className={clsx('h-full rounded-full transition ease-out-custom', cellIsBlast ? 'bg-red-500' : 'bg-emerald-500')}
                             style={{ width: `${cell.confidence * 100}%` }}
                           />
                         </div>
